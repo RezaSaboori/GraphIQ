@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* GraphIQ custom styles */
+body {
+  background-color: #1a1a1a;
+  font-family: 'Inter', sans-serif;
+  color: white;
+  overflow: hidden;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 30px;
+  position: absolute;
+  padding: 10px;
+  box-sizing: border-box;
+  cursor: grab;
+  user-select: none;
+  overflow: hidden;
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow:
+    0 20px 40px rgba(0, 0, 0, 0.35),
+    0 8px 20px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset -6px -6px 24px rgba(0, 0, 0, 0.25),
+    inset 8px 8px 30px rgba(255, 255, 255, 0.06);
+  z-index: 10;
+}
+.glass-card:active { cursor: grabbing; }
+
+/* Gradient border */
+.glass-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.70) 0%,
+    rgba(255, 255, 255, 0.35) 18%,
+    rgba(200, 200, 200, 0.40) 40%,
+    rgba(140, 140, 140, 0.35) 65%,
+    rgba(100, 100, 100, 0.30) 100%
+  );
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Directional light from top-left to bottom-right */
+.glass-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(120% 85% at 0% 0%, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.12) 26%, rgba(255, 255, 255, 0.04) 45%, transparent 60%),
+    radial-gradient(120% 85% at 100% 100%, rgba(0, 0, 0, 0.25) 0%, rgba(0, 0, 0, 0.10) 35%, transparent 60%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+.label-container { display: flex; width: 100%; flex-wrap: wrap; gap: 10px; box-sizing: border-box; }
+.label-container + .property { margin-top: 20px; }
+.label { padding: 0.4rem 1rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; flex: 0 0 auto; white-space: nowrap; }
+.label-green { background-color: #16a34a; }
+.label-blue { background-color: #2563eb; }
+.label-red { background-color: #dc2626; }
+.label-orange { background-color: #ea580c; }
+
+.property {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 20px;
+  padding: 0.4rem 1rem;
+  font-size: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.property + .property { margin-top: 0.75rem; }
+.property-name { font-weight: 600; opacity: 0.8; }
+
+.arrow-label { position: absolute; padding: 4px 12px; border-radius: 9999px; font-size: 0.8rem; transform: translate(-50%, -50%); color: #e5e7eb; backdrop-filter: blur(10px) saturate(140%); -webkit-backdrop-filter: blur(10px) saturate(140%); background: rgba(17, 24, 39, 0.45); border: none; overflow: hidden; }
+.arrow-label::before { content: ''; position: absolute; inset: 0; padding: 1px; border-radius: inherit; background: linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0.35) 18%, rgba(200,200,200,0.4) 40%, rgba(140,140,140,0.35) 65%, rgba(100,100,100,0.3) 100%); mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+.blur-container { display: none; }
+
+/* Tubelight glow overlay (reintroduced) */
+.tubelight-glow { position: absolute; width: 100%; height: 100%; pointer-events: none; }
+.tubelight-glow::before { content: ''; position: absolute; background: var(--glow-color); filter: blur(35px); mix-blend-mode: screen; opacity: 0.9; }
+.tubelight-glow::after { content: ''; position: absolute; background: var(--glow-color); mix-blend-mode: screen; opacity: 0.9; }
+
+/* Split variants so we can control stacking: blur under cards, line over cards */
+.tubelight-blur { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+.tubelight-blur::before { content: ''; position: absolute; background: var(--glow-color); filter: blur(35px); mix-blend-mode: screen; opacity: 0.9; }
+.tubelight-blur::after { display: none; }
+.tubelight-line { position: absolute; width: 100%; height: 100%; pointer-events: none; z-index: 10000; }
+.tubelight-line::after { content: ''; position: absolute; background: var(--glow-color); mix-blend-mode: screen; opacity: 0.9; }
+.tubelight-line::before { display: none; }
+
+/* Top */
+.tubelight-glow.top::before,
+.tubelight-blur.top::before { top: 0; left: var(--edge-inset, 16px); right: var(--edge-inset, 16px); height: 60%; mask-image: linear-gradient(to bottom, black 10%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 10%, transparent 100%); }
+.tubelight-glow.top::after,
+.tubelight-line.top::after { top: 0; left: var(--edge-inset, 16px); right: var(--edge-inset, 16px); height: 2px; mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%); -webkit-mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%); }
+
+/* Bottom */
+.tubelight-glow.bottom::before,
+.tubelight-blur.bottom::before { bottom: 0; left: var(--edge-inset, 16px); right: var(--edge-inset, 16px); height: 60%; mask-image: linear-gradient(to top, black 10%, transparent 100%); -webkit-mask-image: linear-gradient(to top, black 10%, transparent 100%); }
+.tubelight-glow.bottom::after,
+.tubelight-line.bottom::after { bottom: 0; left: var(--edge-inset, 16px); right: var(--edge-inset, 16px); height: 2px; mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%); -webkit-mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%); }
+
+/* Left */
+.tubelight-glow.left::before,
+.tubelight-blur.left::before { top: var(--edge-inset, 16px); bottom: var(--edge-inset, 16px); left: 0; width: 60%; mask-image: linear-gradient(to right, black 10%, transparent 100%); -webkit-mask-image: linear-gradient(to right, black 10%, transparent 100%); }
+.tubelight-glow.left::after,
+.tubelight-line.left::after { top: var(--edge-inset, 16px); bottom: var(--edge-inset, 16px); left: 0; width: 2px; mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%); }
+
+/* Right */
+.tubelight-glow.right::before,
+.tubelight-blur.right::before { top: var(--edge-inset, 16px); bottom: var(--edge-inset, 16px); right: 0; width: 60%; mask-image: linear-gradient(to left, black 10%, transparent 100%); -webkit-mask-image: linear-gradient(to left, black 10%, transparent 100%); }
+.tubelight-glow.right::after,
+.tubelight-line.right::after { top: var(--edge-inset, 16px); bottom: var(--edge-inset, 16px); right: 0; width: 2px; mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%); }

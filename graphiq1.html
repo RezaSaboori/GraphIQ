@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Glass Canvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            font-family: 'Inter', sans-serif;
+            color: white;
+            overflow: hidden; /* Hide scrollbars */
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border-radius: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.125);
+            position: absolute;
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            cursor: grab;
+            user-select: none;
+            overflow: hidden; /* This is crucial to contain the blur */
+        }
+        
+        .glass-card:active {
+            cursor: grabbing;
+        }
+
+        .label-container {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .label {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .label-green { background-color: #16a34a; }
+        .label-blue { background-color: #2563eb; }
+        .label-red { background-color: #dc2626; }
+        .label-orange { background-color: #ea580c; }
+
+        .property {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(5px) saturate(120%);
+            -webkit-backdrop-filter: blur(5px) saturate(120%);
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            margin-bottom: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .property-name {
+            font-weight: 600;
+            opacity: 0.8;
+        }
+
+        .arrow-label {
+            position: absolute;
+            background-color: #1a1a1a;
+            padding: 2px 8px;
+            border-radius: 0.25rem;
+            font-size: 0.8rem;
+            transform: translate(-50%, -50%);
+            border: 1px solid;
+        }
+        
+        .blur-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .tubelight-glow {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* The blurred glow */
+        .tubelight-glow::before {
+            content: '';
+            position: absolute;
+            background: var(--glow-color);
+            filter: blur(35px);
+            mix-blend-mode: screen;
+            opacity: 0.9;
+        }
+
+        /* The sharp line */
+        .tubelight-glow::after {
+            content: '';
+            position: absolute;
+            background: var(--glow-color);
+            mix-blend-mode: screen;
+            opacity: 0.9;
+        }
+        
+        /* Top Glow */
+        .tubelight-glow.top::before {
+            top: 0; left: 0; width: 100%; height: 60%;
+            mask-image: linear-gradient(to bottom, black 10%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, black 10%, transparent 100%);
+        }
+        .tubelight-glow.top::after {
+            top: 0; left: 0; width: 100%; height: 2px;
+            mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%);
+        }
+
+        /* Bottom Glow */
+        .tubelight-glow.bottom::before {
+            bottom: 0; left: 0; width: 100%; height: 60%;
+            mask-image: linear-gradient(to top, black 10%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to top, black 10%, transparent 100%);
+        }
+        .tubelight-glow.bottom::after {
+            bottom: 0; left: 0; width: 100%; height: 2px;
+            mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to right, transparent 0%, black 15%, black 85%, transparent 100%);
+        }
+
+        /* Left Glow */
+        .tubelight-glow.left::before {
+            top: 0; left: 0; width: 60%; height: 100%;
+            mask-image: linear-gradient(to right, black 10%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to right, black 10%, transparent 100%);
+        }
+        .tubelight-glow.left::after {
+            top: 0; left: 0; width: 2px; height: 100%;
+            mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+        }
+
+        /* Right Glow */
+        .tubelight-glow.right::before {
+            top: 0; right: 0; width: 60%; height: 100%;
+            mask-image: linear-gradient(to left, black 10%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to left, black 10%, transparent 100%);
+        }
+        .tubelight-glow.right::after {
+            top: 0; right: 0; width: 2px; height: 100%;
+            mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%);
+        }
+
+
+    </style>
+</head>
+<body class="w-screen h-screen flex items-center justify-center">
+
+    <svg id="arrow-svg" class="absolute top-0 left-0 w-full h-full pointer-events-none">
+        <defs id="arrow-defs"></defs>
+    </svg>
+    <div id="arrow-labels" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
+
+    <div id="card1" class="glass-card w-96" style="top: 45%; left: 15%;">
+        <div class="blur-container"></div>
+        <div class="relative z-10"> <!-- Content wrapper -->
+            <div class="label-container">
+                <div class="label label-green">personal history</div>
+                <div class="label label-blue">risk factor</div>
+            </div>
+            <div class="label-container">
+                <div class="label label-red">Unspecified</div>
+            </div>
+            <div class="property">
+                <span class="property-name">name :</span> Problems associated with the natural environment or human-made changes to the environment
+            </div>
+        </div>
+    </div>
+
+    <div id="card2" class="glass-card w-96" style="top: 15%; left: 55%;">
+        <div class="blur-container"></div>
+        <div class="relative z-10"> <!-- Content wrapper -->
+            <div class="label-container">
+                <div class="label label-green">personal history</div>
+                <div class="label label-blue">risk factor</div>
+            </div>
+            <div class="label-container">
+                <div class="label label-red">Unspecified</div>
+            </div>
+            <div class="property">
+                <span class="property-name">name :</span> Problems associated with the natural environment or human-made changes to the environment
+            </div>
+        </div>
+    </div>
+
+    <div id="card3" class="glass-card w-96" style="top: 55%; left: 60%;">
+        <div class="blur-container"></div>
+        <div class="relative z-10"> <!-- Content wrapper -->
+            <div class="label-container">
+                <div class="label label-orange">family history</div>
+                <div class="label label-red">Unspecified</div>
+            </div>
+            <div class="property">
+                <span class="property-name">name :</span> Family history of diseases of the blood or blood-forming organs
+            </div>
+            <div class="property">
+                <span class="property-name">exclusions :</span> Occupational exposure to risk-factors
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        const cards = document.querySelectorAll('.glass-card');
+        const svg = document.getElementById('arrow-svg');
+        const defs = document.getElementById('arrow-defs');
+        const arrowLabelsContainer = document.getElementById('arrow-labels');
+        let activeCard = null;
+        let offsetX, offsetY;
+
+        // --- Draggable Card Logic ---
+        cards.forEach(card => {
+            card.addEventListener('mousedown', (e) => {
+                if (e.target !== card) return;
+                activeCard = card;
+                offsetX = e.clientX - activeCard.getBoundingClientRect().left;
+                offsetY = e.clientY - activeCard.getBoundingClientRect().top;
+                activeCard.style.cursor = 'grabbing';
+            });
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (activeCard) {
+                e.preventDefault();
+                const newX = e.clientX - offsetX;
+                const newY = e.clientY - offsetY;
+                activeCard.style.left = `${newX}px`;
+                activeCard.style.top = `${newY}px`;
+                drawArrows();
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if(activeCard) {
+                activeCard.style.cursor = 'grab';
+            }
+            activeCard = null;
+        });
+
+        // --- Arrow Drawing Logic ---
+        const connections = [
+            { from: 'card2', to: 'card1', label: '_Related', color: '#facc15' },
+            { from: 'card1', to: 'card3', label: '_Connected', color: '#818cf8' },
+            { from: 'card2', to: 'card3', label: '_Related', color: '#facc15' }
+        ];
+
+        function getClosestSidePoint(rect1, rect2, conn) {
+            const center1 = { x: rect1.left + rect1.width / 2, y: rect1.top + rect1.height / 2 };
+            const center2 = { x: rect2.left + rect2.width / 2, y: rect2.top + rect2.height / 2 };
+            const margin = 8;
+
+            const dx = center2.x - center1.x;
+            const dy = center2.y - center1.y;
+
+            let startPoint, endPoint, startSide, endSide;
+
+            // Determine start point on rect1
+            if (Math.abs(dx) > Math.abs(dy)) {
+                if (dx > 0) { startPoint = { x: rect1.right, y: center1.y }; startSide = 'right'; } 
+                else { startPoint = { x: rect1.left, y: center1.y }; startSide = 'left'; }
+            } else {
+                if (dy > 0) { startPoint = { x: center1.x, y: rect1.bottom }; startSide = 'bottom'; } 
+                else { startPoint = { x: center1.x, y: rect1.top }; startSide = 'top'; }
+            }
+
+            // Determine end point on rect2
+            if (Math.abs(dx) > Math.abs(dy)) {
+                if (dx > 0) { endPoint = { x: rect2.left, y: center2.y }; endSide = 'left'; } 
+                else { endPoint = { x: rect2.right, y: center2.y }; endSide = 'right'; }
+            } else {
+                if (dy > 0) { endPoint = { x: center2.x, y: rect2.top }; endSide = 'top'; } 
+                else { endPoint = { x: center2.x, y: rect2.bottom }; endSide = 'bottom'; }
+            }
+            
+            if (conn && conn.from === 'card2' && conn.to === 'card1') {
+                 startPoint = { x: center1.x, y: rect1.bottom }; startSide = 'bottom';
+                 endPoint = { x: center2.x, y: rect2.top }; endSide = 'top';
+            }
+
+            // Apply margin
+            switch (startSide) {
+                case 'top': startPoint.y -= margin; break;
+                case 'bottom': startPoint.y += margin; break;
+                case 'left': startPoint.x -= margin; break;
+                case 'right': startPoint.x += margin; break;
+            }
+            switch (endSide) {
+                case 'top': endPoint.y -= margin; break;
+                case 'bottom': endPoint.y += margin; break;
+                case 'left': endPoint.x -= margin; break;
+                case 'right': endPoint.x += margin; break;
+            }
+
+            return { startPoint, endPoint, endSide };
+        }
+
+        const createdMarkers = new Set();
+        function createMarker(color) {
+            const markerId = `arrowhead-${color.replace('#', '')}`;
+            if (createdMarkers.has(color)) return markerId;
+            const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            marker.setAttribute('id', markerId);
+            marker.setAttribute('markerWidth', '10');
+            marker.setAttribute('markerHeight', '7');
+            marker.setAttribute('refX', '8');
+            marker.setAttribute('refY', '3.5');
+            marker.setAttribute('orient', 'auto');
+            
+            const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+            polygon.setAttribute('points', '0 0, 10 3.5, 0 7');
+            polygon.setAttribute('fill', color);
+
+            marker.appendChild(polygon);
+            defs.appendChild(marker);
+            
+            createdMarkers.add(color);
+            return markerId;
+        }
+
+        function drawArrows() {
+            svg.querySelectorAll('path').forEach(p => p.remove());
+            arrowLabelsContainer.innerHTML = '';
+            document.querySelectorAll('.blur-container').forEach(c => c.innerHTML = '');
+
+            connections.forEach(conn => {
+                const fromCard = document.getElementById(conn.from);
+                const toCard = document.getElementById(conn.to);
+
+                if (fromCard && toCard) {
+                    const rect1 = fromCard.getBoundingClientRect();
+                    const rect2 = toCard.getBoundingClientRect();
+
+                    const { startPoint, endPoint, endSide } = getClosestSidePoint(rect1, rect2, conn);
+                    const markerId = createMarker(conn.color);
+
+                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                    const d = `M ${startPoint.x} ${startPoint.y} L ${endPoint.x} ${endPoint.y}`;
+                    path.setAttribute('d', d);
+                    path.setAttribute('stroke', conn.color);
+                    path.setAttribute('stroke-width', '2');
+                    path.setAttribute('fill', 'none');
+                    path.setAttribute('stroke-linecap', 'round');
+                    path.setAttribute('stroke-linejoin', 'round');
+                    path.setAttribute('marker-end', `url(#${markerId})`);
+                    svg.appendChild(path);
+
+                    const label = document.createElement('div');
+                    label.className = 'arrow-label';
+                    label.textContent = conn.label;
+                    label.style.borderColor = conn.color;
+                    label.style.color = conn.color;
+                    label.style.left = `${(startPoint.x + endPoint.x) / 2}px`;
+                    label.style.top = `${(startPoint.y + endPoint.y) / 2}px`;
+                    arrowLabelsContainer.appendChild(label);
+                    
+                    // --- Create Progressive Tubelight Effect ---
+                    const blurContainer = toCard.querySelector('.blur-container');
+                    const tubelight = document.createElement('div');
+                    tubelight.className = `tubelight-glow ${endSide}`;
+                    tubelight.style.setProperty('--glow-color', conn.color);
+                    
+                    blurContainer.appendChild(tubelight);
+                }
+            });
+        }
+        
+        window.addEventListener('load', drawArrows);
+        window.addEventListener('resize', drawArrows);
+    </script>
+</body>
+</html>
