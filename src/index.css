@@ -16,7 +16,6 @@ body {
   position: absolute;
   padding: 10px;
   box-sizing: border-box;
-  cursor: grab;
   user-select: none;
   overflow: hidden;
   backdrop-filter: blur(12px) saturate(140%);
@@ -29,7 +28,10 @@ body {
     inset 8px 8px 30px rgba(255, 255, 255, 0.06);
   z-index: 10;
 }
-.glass-card:active { cursor: grabbing; }
+/* Cursor states are now handled by JavaScript for better control */
+.glass-card {
+  cursor: move !important; /* Default state - will be overridden by React state */
+}
 
 /* Gradient border */
 .glass-card::before {

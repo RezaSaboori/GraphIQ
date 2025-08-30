@@ -1,6 +1,6 @@
 import React, { forwardRef, useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { CoordinateSystem } from '../utils/coordinateSystem';
-import { calculateArrowEndSide, calculateTubelightLength, getTubelightStyles, getTubelightLineStyles } from '../utils/arrowUtils';
+import { calculateTubelightLength, getTubelightStyles, getTubelightLineStyles } from '../utils/arrowUtils';
 
 const GlassCard = forwardRef(({ 
   id, 
@@ -16,6 +16,7 @@ const GlassCard = forwardRef(({
   ...props 
 }, ref) => {
   const [isDragging, setIsDragging] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const cardRef = useRef(null);
 
@@ -30,6 +31,7 @@ const GlassCard = forwardRef(({
     if (e.target !== cardRef.current) return;
     
     setIsDragging(true);
+    console.log('Mouse Down - isDragging:', true, 'isHovered:', isHovered);
     
     // Calculate offset from mouse position to the card's current position
     // Since we're using transform, we need to account for the current position
@@ -41,8 +43,8 @@ const GlassCard = forwardRef(({
       y: offsetY
     });
     
-    cardRef.current.style.cursor = 'grabbing';
-  }, [position]);
+    // Cursor will be updated via React state
+  }, [position, isHovered]);
 
   const handleMouseMove = useCallback((e) => {
     if (!isDragging) return;
@@ -84,9 +86,22 @@ const GlassCard = forwardRef(({
   const handleMouseUp = useCallback(() => {
     if (isDragging) {
       setIsDragging(false);
-      if (cardRef.current) {
-        cardRef.current.style.cursor = 'grab';
-      }
+      console.log('Mouse Up - isDragging:', false, 'isHovered:', isHovered);
+      // Cursor will be updated via React state
+    }
+  }, [isDragging, isHovered]);
+
+  const handleMouseEnter = useCallback(() => {
+    if (!isDragging) {
+      setIsHovered(true);
+      console.log('Mouse Enter - isHovered:', true, 'isDragging:', isDragging);
+    }
+  }, [isDragging]);
+
+  const handleMouseLeave = useCallback(() => {
+    if (!isDragging) {
+      setIsHovered(false);
+      console.log('Mouse Leave - isHovered:', false, 'isDragging:', isDragging);
     }
   }, [isDragging]);
 
@@ -121,10 +136,22 @@ const GlassCard = forwardRef(({
   const mergedStyle = {
     width: width != null ? `${width}px` : undefined,
     position: 'absolute',
-    cursor: isDragging ? 'grabbing' : 'grab',
+    cursor: isDragging ? 'grabbing' : (isHovered ? 'grab' : 'move'),
     userSelect: 'none',
     ...style
   };
+
+  // Force cursor update by adding it directly to the element
+  useEffect(() => {
+    if (cardRef.current) {
+      const cursorValue = isDragging ? 'grabbing' : (isHovered ? 'grab' : 'move');
+      cardRef.current.style.cursor = cursorValue;
+      console.log('Direct cursor update:', cursorValue);
+    }
+  }, [isDragging, isHovered]);
+
+  // Debug cursor state
+  console.log('Cursor State - isDragging:', isDragging, 'isHovered:', isHovered, 'cursor:', mergedStyle.cursor);
 
   return (
     <div 
@@ -142,6 +169,8 @@ const GlassCard = forwardRef(({
       className={`glass-card ${className}`} 
       style={mergedStyle} 
       onMouseDown={handleMouseDown}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       {...props}
     >
       {/* Tubelight Effects - Multiple layers for proper blending */}
