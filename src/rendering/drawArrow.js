@@ -38,7 +38,7 @@ function calculateArrowPath(from, to, curveness) {
   const dy = end.y - start.y;
   const length = Math.sqrt(dx * dx + dy * dy);
   
-  if (length === 0) return { start, end, control: mid };
+  if (length === 0) return { start, end, control: { x: midX, y: midY } };
   
   // Normalize and rotate 90 degrees for perpendicular
   const perpX = -dy / length;
@@ -115,26 +115,62 @@ function drawArrowHead(ctx, end, control, color, width) {
  * Draw the arrow label
  */
 function drawArrowLabel(ctx, path, label, color) {
-  // Position label at the control point (middle of curve)
-  const labelX = path.control.x;
-  const labelY = path.control.y;
+  // Calculate a better position along the curve for the label
+  // Use a point that's 60% along the curve for better visibility
+  const t = 0.6;
   
-  // Label background
-  const textMetrics = ctx.measureText(label);
-  const labelWidth = textMetrics.width + 10;
-  const labelHeight = 20;
+  // Calculate position along the quadratic curve
+  const labelX = (1 - t) * (1 - t) * path.start.x + 
+                 2 * (1 - t) * t * path.control.x + 
+                 t * t * path.end.x;
+  const labelY = (1 - t) * (1 - t) * path.start.y + 
+                 2 * (1 - t) * t * path.control.y + 
+                 t * t * path.end.y;
   
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-  ctx.fillRect(labelX - labelWidth / 2, labelY - labelHeight / 2, labelWidth, labelHeight);
+  // Calculate tangent direction at this point for label orientation
+  const tangentX = 2 * (1 - t) * (path.control.x - path.start.x) + 
+                   2 * t * (path.end.x - path.control.x);
+  const tangentY = 2 * (1 - t) * (path.control.y - path.start.y) + 
+                   2 * t * (path.end.y - path.control.y);
   
-  // Label text
-  ctx.fillStyle = color;
-  ctx.font = '12px Arial, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, labelX, labelY);
-  
-  // Reset text alignment
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
+  // Normalize tangent
+  const tangentLength = Math.sqrt(tangentX * tangentX + tangentY * tangentY);
+  if (tangentLength > 0) {
+    const normalizedTangentX = tangentX / tangentLength;
+    const normalizedTangentY = tangentY / tangentLength;
+    
+    // Calculate perpendicular for label offset
+    const perpX = -normalizedTangentY;
+    const perpY = normalizedTangentX;
+    
+    // Offset label perpendicular to the curve for better visibility
+    const offsetDistance = 15;
+    const finalLabelX = labelX + perpX * offsetDistance;
+    const finalLabelY = labelY + perpY * offsetDistance;
+    
+    // Set font before measuring text
+    ctx.font = 'bold 12px Arial, sans-serif';
+    
+    // Label background with better sizing
+    const textMetrics = ctx.measureText(label);
+    const labelWidth = textMetrics.width + 16;
+    const labelHeight = 24;
+    
+    // Draw label background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+    
+    // Simple rectangle background (easier to debug and more reliable)
+    ctx.fillRect(finalLabelX - labelWidth / 2, finalLabelY - labelHeight / 2, labelWidth, labelHeight);
+    
+    // Label text
+    ctx.fillStyle = color;
+    ctx.font = 'bold 12px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, finalLabelX, finalLabelY);
+    
+    // Reset text alignment
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
 }

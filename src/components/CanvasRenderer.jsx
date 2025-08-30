@@ -114,9 +114,12 @@ const CanvasRenderer = forwardRef(({
         const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
         const newScale = Math.max(0.1, Math.min(5.0, viewportTransform.scale * zoomFactor));
         
-        // Zoom towards mouse position
-        const newTranslateX = mouseX - (mouseX - viewportTransform.translateX) * (newScale / viewportTransform.scale);
-        const newTranslateY = mouseY - (mouseY - viewportTransform.translateY) * (newScale / viewportTransform.scale);
+        // Zoom towards mouse position - calculate the world position under the mouse
+        const worldPos = utils.screenToWorld(mouseX, mouseY);
+        
+        // Calculate new translation to keep the world point under the mouse
+        const newTranslateX = mouseX - worldPos.x * newScale;
+        const newTranslateY = mouseY - worldPos.y * newScale;
         
         const newTransform = {
           ...viewportTransform,
@@ -161,9 +164,12 @@ const CanvasRenderer = forwardRef(({
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(5.0, viewportTransform.scale * zoomFactor));
     
-    // Zoom towards mouse position
-    const newTranslateX = mouseX - (mouseX - viewportTransform.translateX) * (newScale / viewportTransform.scale);
-    const newTranslateY = mouseY - (mouseY - viewportTransform.translateY) * (newScale / viewportTransform.scale);
+    // Zoom towards mouse position - calculate the world position under the mouse
+    const worldPos = utils.screenToWorld(mouseX, mouseY);
+    
+    // Calculate new translation to keep the world point under the mouse
+    const newTranslateX = mouseX - worldPos.x * newScale;
+    const newTranslateY = mouseY - worldPos.y * newScale;
     
     const newTransform = {
       ...viewportTransform,
@@ -222,8 +228,8 @@ const CanvasRenderer = forwardRef(({
       e.preventDefault();
       setIsPanning(true);
       setPanStart({
-        x: e.clientX - viewportTransform.translateX,
-        y: e.clientY - viewportTransform.translateY
+        x: e.clientX,
+        y: e.clientY
       });
       
       // Change cursor to grabbing when panning
@@ -278,10 +284,13 @@ const CanvasRenderer = forwardRef(({
     }
     
     if (isPanning) {
+      const deltaX = e.clientX - panStart.x;
+      const deltaY = e.clientY - panStart.y;
+      
       const newTransform = {
         ...viewportTransform,
-        translateX: e.clientX - panStart.x,
-        translateY: e.clientY - panStart.y
+        translateX: viewportTransform.translateX + deltaX,
+        translateY: viewportTransform.translateY + deltaY
       };
       
       // Update viewport transform immediately for smooth panning
@@ -291,6 +300,11 @@ const CanvasRenderer = forwardRef(({
         setLocalViewTransform(newTransform);
       }
       
+      // Update pan start to current position for smooth continuous panning
+      setPanStart({
+        x: e.clientX,
+        y: e.clientY
+      });
 
     } else if (isDragging && selectedCard) {
       // Handle card dragging with throttling
@@ -376,8 +390,11 @@ const CanvasRenderer = forwardRef(({
     
     // Apply view transformation
     ctx.save();
+    ctx.translate(viewportTransform.translateX, viewportTransform.translateY);
     ctx.scale(viewportTransform.scale, viewportTransform.scale);
-    ctx.translate(-viewportTransform.translateX, -viewportTransform.translateY);
+    if (viewportTransform.rotation !== 0) {
+      ctx.rotate(viewportTransform.rotation);
+    }
     
     // Draw grid if enabled
     if (showGrid) {

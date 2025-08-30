@@ -222,19 +222,58 @@ export function SceneProvider({ children }) {
   
   // Utility functions for coordinate conversion
   const screenToWorld = useCallback((screenX, screenY) => {
-    const { scale, translateX, translateY } = state.viewTransform;
-    return {
-      x: (screenX - translateX) / scale,
-      y: (screenY - translateY) / scale
-    };
+    const { scale, translateX, translateY, rotation } = state.viewTransform;
+    
+    // First, remove the translation
+    let x = screenX - translateX;
+    let y = screenY - translateY;
+    
+    // Then, remove the scale
+    x = x / scale;
+    y = y / scale;
+    
+    // Finally, remove the rotation (apply inverse rotation)
+    if (rotation !== 0) {
+      const cos = Math.cos(-rotation);
+      const sin = Math.sin(-rotation);
+      
+      const rotatedX = x * cos - y * sin;
+      const rotatedY = x * sin + y * cos;
+      
+      x = rotatedX;
+      y = rotatedY;
+    }
+    
+    return { x, y };
   }, [state.viewTransform]);
   
   const worldToScreen = useCallback((worldX, worldY) => {
-    const { scale, translateX, translateY } = state.viewTransform;
-    return {
-      x: worldX * scale + translateX,
-      y: worldY * scale + translateY
-    };
+    const { scale, translateX, translateY, rotation } = state.viewTransform;
+    
+    let x = worldX;
+    let y = worldY;
+    
+    // First, apply rotation
+    if (rotation !== 0) {
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+      
+      const rotatedX = x * cos - y * sin;
+      const rotatedY = x * sin + y * cos;
+      
+      x = rotatedX;
+      y = rotatedY;
+    }
+    
+    // Then, apply scale
+    x = x * scale;
+    y = y * scale;
+    
+    // Finally, apply translation
+    const screenX = x + translateX;
+    const screenY = y + translateY;
+    
+    return { x: screenX, y: screenY };
   }, [state.viewTransform]);
   
   const value = {
