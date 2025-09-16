@@ -458,12 +458,18 @@ export class RenderPass {
     // 设置uniforms
     if (uniforms) {
       let textureCount = 0;
+      const currentOutputTexture = this.frameBuffer?.getTexture();
+      const currentDepthTexture = this.frameBuffer?.getDepthTexture();
       Object.entries(uniforms).forEach(([name, value]) => {
         if (value instanceof WebGLTexture) {
-          gl.activeTexture(gl.TEXTURE0 + textureCount);
-          gl.bindTexture(gl.TEXTURE_2D, value);
-          this.program.setUniform(name, textureCount); // 绑定为纹理单元编号
-          textureCount += 1;
+          if (value !== currentOutputTexture && value !== currentDepthTexture) {
+            gl.activeTexture(gl.TEXTURE0 + textureCount);
+            gl.bindTexture(gl.TEXTURE_2D, value);
+            this.program.setUniform(name, textureCount); // 绑定为纹理单元编号
+            textureCount += 1;
+          } else {
+             console.warn(`Skipping texture binding for ${name} - would create feedback loop`);
+          }
         } else {
           this.program.setUniform(name, value);
         }
