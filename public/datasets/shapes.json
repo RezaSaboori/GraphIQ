@@ -1,0 +1,70 @@
+[
+    {
+        "id": "shape1",
+        "position": {
+            "x": 100,
+            "y": 0
+        },
+        "size": {
+            "height": 200
+        },
+        "zIndex": 0,
+        "tint": {
+            "r": 255,
+            "g": 0,
+            "b": 0,
+            "a": 0.6
+        }
+    },
+    {
+        "id": "shape2",
+        "position": {
+            "x": -200,
+            "y": -200
+        },
+        "size": {
+            "height": 200
+        },
+        "zIndex": 1,
+        "tint": {
+            "r": 0,
+            "g": 255,
+            "b": 0,
+            "a": 0.1
+        }
+    },
+    {
+        "id": "shape3",
+        "position": {
+            "x": -50,
+            "y": 250
+        },
+        "size": {
+            "height": 200
+        },
+        "zIndex": 2,
+        "tint": {
+            "r": 0,
+            "g": 0,
+            "b": 0,
+            "a": 0.5
+        }
+    },
+    {
+        "id": "shape4",
+        "position": {
+            "x": 300,
+            "y": 100
+        },
+        "size": {
+            "height": 100
+        },
+        "zIndex": 3,
+        "tint": {
+            "r": 255,
+            "g": 255,
+            "b": 0,
+            "a": 1.0
+        }
+    }
+]

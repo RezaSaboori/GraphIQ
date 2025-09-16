@@ -1,0 +1,136 @@
+
+.canvas {
+  transform: scale(calc(1 / var(--dpr)));
+  transform-origin: top left;
+  touch-action: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+}
+
+.bgSelect {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: -44px;
+  z-index: 2;
+  position: relative;
+
+  .bgSelectItem {
+    width: 60px;
+    height: 60px;
+    flex-shrink: 0;
+    border: 1px solid var(--leva-colors-elevation3);
+    border-radius: var(--leva-radii-sm);
+    background-size: cover;
+    overflow: hidden;
+    position: relative;
+
+    &Active {
+      outline: 2px solid var(--leva-colors-accent2);
+    }
+
+    &Overlay {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      bottom: 0;
+
+      .bgSelectItemVideoIcon {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 16px;
+        height: 16px;
+        color: rgba(white, 0.8);
+        filter: drop-shadow(0 1px 1.5px rgba(black, 0.8));
+        transition: opacity 300ms;
+      }
+
+      .bgSelectItemCustomIcon {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%) scale(0.8);
+        padding: 5px;
+        border-radius: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(white, 0.9);
+        // filter: drop-shadow(0 1px 2px rgba(black, 0.5));
+        background-color: rgba(black, 0.3);
+      }
+    }
+
+    &TypeCustom {
+      --alpha-pattern-size: 20px;
+      --alpha-pattern-color-a: #5b5f6b;
+      --alpha-pattern-color-b: var(--leva-colors-elevation1);
+
+      &::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+
+        background-color: var(--alpha-pattern-color-b);
+        background-image:
+          repeating-linear-gradient(
+            45deg,
+            var(--alpha-pattern-color-a) 25%,
+            transparent 25%,
+            transparent 75%,
+            var(--alpha-pattern-color-a) 75%,
+            var(--alpha-pattern-color-a)
+          ),
+          repeating-linear-gradient(
+            45deg,
+            var(--alpha-pattern-color-a) 25%,
+            var(--alpha-pattern-color-b) 25%,
+            var(--alpha-pattern-color-b) 75%,
+            var(--alpha-pattern-color-a) 75%,
+            var(--alpha-pattern-color-a)
+          );
+        background-position:
+          0 0,
+          calc(var(--alpha-pattern-size) / 2) calc(var(--alpha-pattern-size) / 2);
+        background-size: var(--alpha-pattern-size) var(--alpha-pattern-size);
+      }
+    }
+  }
+}
+
+.bgSelectItemVideo,
+.bgSelectItemImg {
+  left: 0;
+  top: 0;
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+:global(#root > div[class^='leva-']) {
+  background-color: rgba(0, 11, 36, 0.4);
+  & > div:last-child {
+    background-color: rgba(0, 9, 30, 0.6);
+  }
+}
+:global(div[data-leva-folder='1']) {
+  & > div:first-child {
+    & > svg + div {
+      display: none;
+    }
+
+    &::after {
+      content: var(--i18n-name);
+      display: inline;
+    }
+  }
+
+  & > div:last-child {
+    background-color: transparent;
+  }
+}
