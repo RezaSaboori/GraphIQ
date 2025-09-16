@@ -13,7 +13,10 @@ import {
   loadTextureFromURL,
   MultiPassRenderer,
   updateVideoTexture,
+  RenderPass,
 } from './utils/GLUtils';
+import { OITSystem } from './utils/OITSystem';
+import PassthroughFragmentShader from './shaders/fragment-passthrough.glsl?raw';
 
 import VertexShader from './shaders/vertex.glsl?raw';
 import FragmentBgShader from './shaders/fragment-bg.glsl?raw';
@@ -40,6 +43,7 @@ import bgVideo3 from '@/assets/bg-video-3.mp4';
 
 import { useLevaControls } from './Controls';
 import { ShapeManager, type Shape } from './utils/ShapeManager';
+import { LiquidShape } from './elements/LiquidShape';
 
 // Import ColorValue type for per-shape tints
 type ColorValue = {
@@ -236,6 +240,9 @@ function App() {
     height: window.innerHeight,
     dpr: 1,
   });
+  const [oitSystem, setOitSystem] = useState<OITSystem | null>(null);
+  const [displayPass, setDisplayPass] = useState<RenderPass | null>(null);
+  const [gl, setGl] = useState<WebGL2RenderingContext | null>(null);
 
   const { controls } = useLevaControls();
 
@@ -392,13 +399,49 @@ function App() {
     }
     canvasRef.current.width = canvasInfo.width * canvasInfo.dpr;
     canvasRef.current.height = canvasInfo.height * canvasInfo.dpr;
-  }, [canvasInfo]);
+    
+    if (gl) {
+      // Handle gl context resizing here if needed
+    }
+  }, [canvasInfo, gl]);
 
   useEffect(() => {
-    if (!canvasRef.current) {
+    if (!canvasRef.current) return;
+    
+    const webgl2Context = canvasRef.current.getContext('webgl2', { antialias: false });
+    if (!webgl2Context) {
+      console.error('WebGL 2 not supported');
+      return;
+    }
+    setGl(webgl2Context);
+    
+    // Check for compute shader support
+    // `getParameter(MAX_COMPUTE_WORK_GROUP_COUNT)` should return a non-zero array for support.
+    const maxWorkGroupCount = webgl2Context.getParameter(0x91BE); // MAX_COMPUTE_WORK_GROUP_COUNT
+    const hasComputeShaders = Array.isArray(maxWorkGroupCount) && maxWorkGroupCount.length > 0 && maxWorkGroupCount[0] > 0;
+
+    if (hasComputeShaders) {
+      const oit = new OITSystem(webgl2Context, canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr);
+      setOitSystem(oit);
+      
+      const pass = new RenderPass(webgl2Context, { vertex: VertexShader, fragment: PassthroughFragmentShader }, true);
+      setDisplayPass(pass);
+
+    } else {
+      console.warn("Compute Shaders are not supported. Falling back to multi-pass rendering.");
+      // The existing MultiPassRenderer will be used as a fallback automatically.
+    }
+
+  }, [canvasInfo.width, canvasInfo.height, canvasInfo.dpr]);
+
+  useEffect(() => {
+    if (!canvasRef.current || !gl) {
       return;
     }
 
+    // This block will now contain both the OIT and the fallback rendering logic.
+    // If oitSystem is present, we use it. Otherwise, the old logic runs.
+    
     const canvasEl = canvasRef.current;
     
     // Add keyboard controls for testing zIndex functionality
@@ -590,17 +633,15 @@ function App() {
     canvasEl.addEventListener('pointerleave', onPointerLeave);
     window.addEventListener('keydown', onKeyDown);
 
-    const gl = canvasEl.getContext('webgl2');
-    if (!gl) {
-      return;
+    let renderer: MultiPassRenderer | null = null;
+    if (!oitSystem) {
+      // Fallback: Initialize MultiPassRenderer if OIT is not supported
+      const initialShapes = stateRef.current.shapeManager.getVisibleShapes();
+      const initialPasses = buildLayeredRenderPasses(initialShapes);
+      renderer = new MultiPassRenderer(canvasEl, initialPasses);
+      stateRef.current.lastShapesState = stateRef.current.shapeManager.serialize();
     }
-
-    // Initial setup with current shapes
-    const initialShapes = stateRef.current.shapeManager.getVisibleShapes();
-    const initialPasses = buildLayeredRenderPasses(initialShapes);
-    const renderer = new MultiPassRenderer(canvasEl, initialPasses);
-    stateRef.current.lastShapesState = stateRef.current.shapeManager.serialize();
-
+    
     let raf: number | null = null;
     const lastState = {
       canvasInfo: null as typeof canvasInfo | null,
@@ -611,282 +652,322 @@ function App() {
     // let startTime: number | null = null
     const render = () => {
       raf = requestAnimationFrame(render);
-
-      // let time = 0;
-      // if (!startTime) {
-      //   startTime = t;
-      // } else {
-      //   time = t - startTime;
-      // }
-
-      // Update hover animation if active
-      if (stateRef.current.hoverAnimationStart !== null && stateRef.current.hoverShapeId) {
-        const now = performance.now();
-        const elapsed = now - stateRef.current.hoverAnimationStart;
-        const progress = Math.min(elapsed / stateRef.current.hoverAnimationDuration, 1.0);
-        
-        // Update hover shape with current animation progress
-        const originalShape = stateRef.current.hoveredShapeId 
-          ? stateRef.current.shapeManager.getShape(stateRef.current.hoveredShapeId)
-          : null;
-        
-        if (originalShape) {
-          const currentCanvasInfo = stateRef.current.canvasInfo;
-          const hoverShapeData = createHoverShape(originalShape, progress, currentCanvasInfo);
-          stateRef.current.shapeManager.updateShape(stateRef.current.hoverShapeId, hoverShapeData);
-        }
-        
-        // Stop animation when complete
-        if (progress >= 1.0) {
-          stateRef.current.hoverAnimationStart = null;
-        }
-      }
-
-      // Check if shapes have changed and rebuild passes if needed
-      const currentShapesState = stateRef.current.shapeManager.serialize();
-      if (currentShapesState !== stateRef.current.lastShapesState) {
-        const currentShapes = stateRef.current.shapeManager.getVisibleShapes();
-        const newPasses = buildLayeredRenderPasses(currentShapes);
-        renderer.rebuildPasses(newPasses);
-        stateRef.current.lastShapesState = currentShapesState;
-      }
-
-      const canvasInfo = stateRef.current.canvasInfo;
-      const textureUrl = stateRef.current.bgTextureUrl;
-      if (
-        !lastState.canvasInfo ||
-        lastState.canvasInfo.width !== canvasInfo.width ||
-        lastState.canvasInfo.height !== canvasInfo.height ||
-        lastState.canvasInfo.dpr !== canvasInfo.dpr
-      ) {
-        gl.viewport(
-          0,
-          0,
-          Math.round(canvasInfo.width * canvasInfo.dpr),
-          Math.round(canvasInfo.height * canvasInfo.dpr),
-        );
-        renderer.resize(canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr);
-        renderer.setUniform('u_resolution', [
-          canvasInfo.width * canvasInfo.dpr,
-          canvasInfo.height * canvasInfo.dpr,
-        ]);
-      }
-      if (textureUrl !== lastState.bgTextureUrl) {
-        if (lastState.bgTextureType === 'video') {
-          if (lastState.controls?.bgType !== undefined) {
-            stateRef.current.bgVideoEls.get(lastState.controls.bgType)?.pause();
-          }
-        }
-        if (!textureUrl) {
-          if (stateRef.current.bgTexture) {
-            gl.deleteTexture(stateRef.current.bgTexture);
-            stateRef.current.bgTexture = null;
-            stateRef.current.bgTextureType = null;
-          }
-        } else {
-          if (stateRef.current.bgTextureType === 'image') {
-            const rafId = requestAnimationFrame(() => {
-              stateRef.current.bgTextureReady = false;
-            });
-            loadTextureFromURL(gl, textureUrl).then(({ texture, ratio }) => {
-              if (stateRef.current.bgTextureUrl === textureUrl) {
-                cancelAnimationFrame(rafId);
-                stateRef.current.bgTexture = texture;
-                stateRef.current.bgTextureRatio = ratio;
-                stateRef.current.bgTextureReady = true;
-              }
-            });
-          } else if (stateRef.current.bgTextureType === 'video') {
-            stateRef.current.bgTextureReady = false;
-            stateRef.current.bgTexture = createEmptyTexture(gl);
-            stateRef.current.bgVideoEls.get(stateRef.current.controls.bgType)?.play();
-          }
-        }
-      }
-      lastState.controls = stateRef.current.controls;
-      lastState.bgTextureType = stateRef.current.bgTextureType;
-      lastState.canvasInfo = canvasInfo;
-      lastState.bgTextureUrl = stateRef.current.bgTextureUrl;
-
-      if (stateRef.current.bgTextureType === 'video') {
-        const videoEl = stateRef.current.bgVideoEls.get(stateRef.current.controls.bgType);
-        if (stateRef.current.bgTexture && videoEl) {
-          const info = updateVideoTexture(gl, stateRef.current.bgTexture, videoEl);
-
-          if (info) {
-            stateRef.current.bgTextureRatio = info.ratio;
-            stateRef.current.bgTextureReady = true;
-          }
-        }
-      }
-
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-      const controls = stateRef.current.controls;
-
-      const shapeSizeSpring = {
-        x: controls.shapeWidth,
-        y: undefined,
-      };
-
-
-      // Set global uniforms that apply to all passes
-      renderer.setUniforms({
-        u_resolution: [canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr],
-        u_dpr: canvasInfo.dpr,
-        u_blurWeights: stateRef.current.blurWeights,
-        u_blurRadius: stateRef.current.controls.blurRadius,
-        u_mouse: [stateRef.current.canvasPointerPos.x, stateRef.current.canvasPointerPos.y],
-        u_glareAngle: (controls.glareAngle * Math.PI) / 180,
-      });
-
-      // Build pass-specific uniforms
       
-      const passUniforms: Record<string, Record<string, any>> = {
-        bgPass: {
-          u_bgType: controls.bgType,
-          u_bgTexture: (stateRef.current.bgTextureUrl && stateRef.current.bgTexture) ?? undefined,
-          u_bgTextureRatio:
-            stateRef.current.bgTextureUrl && stateRef.current.bgTexture
-              ? stateRef.current.bgTextureRatio
-              : undefined,
-          u_bgTextureReady: stateRef.current.bgTextureReady ? 1 : 0,
-          u_shadowExpand: controls.shadowExpand,
-          u_shadowFactor: controls.shadowFactor / 100,
-          u_shadowPosition: [-controls.shadowPosition.x, -controls.shadowPosition.y],
-          // For background shadows, we still need all shapes
-          u_shapeCount: stateRef.current.shapeManager.getVisibleShapes().length,
-          u_shapePositions: stateRef.current.shapeManager.getShapeDataForShader().positions,
-          u_shapeSizes: stateRef.current.shapeManager.getShapeDataForShader().sizes,
-          u_shapeRadii: stateRef.current.shapeManager.getShapeDataForShader().radii,
-          u_shapeRoundnesses: stateRef.current.shapeManager.getShapeDataForShader().roundnesses,
-          u_shapeVisibilities: stateRef.current.shapeManager.getShapeDataForShader().visibilities,
-          u_shapeZIndices: stateRef.current.shapeManager.getShapeDataForShader().zIndices,
-          u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader().isHoverShape,
-          u_mergeRatio: controls.mergeRatio,
-        },
-      };
+      if (oitSystem && displayPass && gl) {
+        // --- OIT Render Path ---
+        const visibleShapes = stateRef.current.shapeManager.getVisibleShapes();
 
-      // Add uniforms for the single shape mask pass (much simpler!)
-      const currentShapes = stateRef.current.shapeManager.getVisibleShapes();
-      
-      if (currentShapes.length > 0) {
-        // Only need uniforms for the single allShapesMask pass
-        passUniforms.allShapesMask = {
-          u_shapeCount: currentShapes.length,
-          u_shapePositions: stateRef.current.shapeManager.getShapeDataForShader().positions,
-          u_shapeSizes: stateRef.current.shapeManager.getShapeDataForShader().sizes,
-          u_shapeRadii: stateRef.current.shapeManager.getShapeDataForShader().radii,
-          u_shapeRoundnesses: stateRef.current.shapeManager.getShapeDataForShader().roundnesses,
-          u_shapeVisibilities: stateRef.current.shapeManager.getShapeDataForShader().visibilities,
-          u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader().isHoverShape,
-          u_mergeRatio: controls.mergeRatio,
-        };
-      }
+        const shapeDefsById = new Map(stateRef.current.shapeDefinitions.map(def => [def.id, def]));
 
-      // Add uniforms for each z-index layer (simplified)
-      const currentPasses = buildLayeredRenderPasses(currentShapes);
-      
-      // Group shapes by z-index for uniform generation
-      const zIndexGroups = new Map<number, Shape[]>();
-      currentShapes.forEach(shape => {
-        if (!zIndexGroups.has(shape.zIndex)) {
-          zIndexGroups.set(shape.zIndex, []);
-        }
-        zIndexGroups.get(shape.zIndex)!.push(shape);
-      });
-      
-      // Add uniforms for each z-index layer
-      const zIndexValues = Array.from(zIndexGroups.keys()).sort((a, b) => a - b);
-      for (let i = 0; i < zIndexValues.length; i++) {
-        const zIndex = zIndexValues[i];
-        const shapesInGroup = zIndexGroups.get(zIndex)!;
-        const passName = `zIndexLayer_${zIndex}`;
-        
-        // Get tint - prioritize hover shape tint if present, otherwise use first shape's tint
-        let groupTint: ColorValue;
-        const hoverShape = shapesInGroup.find(s => s.id === 'hover_shape');
-        if (hoverShape && stateRef.current.hoveredShapeId) {
-          // Use the tint of the original hovered shape for the hover shape
-          const hoveredShapeDef = stateRef.current.shapeDefinitions.find(def => def.id === stateRef.current.hoveredShapeId);
-          groupTint = hoveredShapeDef ? hoveredShapeDef.tint : controls.tint;
-        } else {
-          // Use the tint of the first shape in the group
-          const firstShape = shapesInGroup[0];
-          const shapeDef = stateRef.current.shapeDefinitions.find(def => def.id === firstShape.id);
-          groupTint = shapeDef ? shapeDef.tint : controls.tint;
-        }
-        
-        // Create shape data for this z-index group only
-        const groupShapeData = {
-          positions: [] as number[],
-          sizes: [] as number[],
-          radii: [] as number[],
-          roundnesses: [] as number[],
-          visibilities: [] as number[],
-          zIndices: [] as number[],
-          isHoverShape: [] as number[],
-        };
-        
-        // Fill data for shapes in this group (up to 20 shapes max)
-        for (let j = 0; j < 20; j++) {
-          if (j < shapesInGroup.length) {
-            const shape = shapesInGroup[j];
-            groupShapeData.positions.push(shape.position.x, shape.position.y);
-            groupShapeData.sizes.push(shape.size.width, shape.size.height);
-            groupShapeData.radii.push(shape.radius);
-            groupShapeData.roundnesses.push(shape.roundness);
-            groupShapeData.visibilities.push(shape.visible ? 1.0 : 0.0);
-            groupShapeData.zIndices.push(shape.zIndex);
-            groupShapeData.isHoverShape.push(shape.id === 'hover_shape' ? 1.0 : 0.0);
-          } else {
-            // Fill with default values for unused slots
-            groupShapeData.positions.push(0, 0);
-            groupShapeData.sizes.push(0, 0);
-            groupShapeData.radii.push(0);
-            groupShapeData.roundnesses.push(0);
-            groupShapeData.visibilities.push(0);
-            groupShapeData.zIndices.push(0);
-            groupShapeData.isHoverShape.push(0.0);
-          }
-        }
-        
-        passUniforms[passName] = {
-          // Group shape data for blob merging
-          u_shapeCount: shapesInGroup.length,
-          u_shapePositions: groupShapeData.positions,
-          u_shapeSizes: groupShapeData.sizes,
-          u_shapeRadii: groupShapeData.radii,
-          u_shapeRoundnesses: groupShapeData.roundnesses,
-          u_shapeVisibilities: groupShapeData.visibilities,
-          u_shapeZIndices: groupShapeData.zIndices,
-          u_isHoverShape: groupShapeData.isHoverShape,
-          u_mergeRatio: controls.mergeRatio,
-          
-          // Glass effect properties - using group tint
-          u_tint: [
-            groupTint.r / 255,
-            groupTint.g / 255,
-            groupTint.b / 255,
-            groupTint.a,
-          ],
-          u_refThickness: controls.refThickness,
+        const liquidShapes: LiquidShape[] = visibleShapes.map(shape => {
+          const def = shapeDefsById.get(shape.id);
+          return new LiquidShape(
+            shape.id,
+            shape.position,
+            shape.size,
+            shape.zIndex,
+            def ? def.tint : { r: 255, g: 255, b: 255, a: 1}, // default tint
+            shape.radius,
+            shape.roundness
+          );
+        });
+
+
+        // Prepare global uniforms
+        const globalUniforms = {
+          u_resolution: [canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr],
           u_refFactor: controls.refFactor,
           u_refDispersion: controls.refDispersion,
-          u_refFresnelRange: controls.refFresnelRange,
-          u_refFresnelHardness: controls.refFresnelHardness / 100,
-          u_refFresnelFactor: controls.refFresnelFactor / 100,
-          u_glareRange: controls.glareRange,
-          u_glareHardness: controls.glareHardness / 100,
-          u_glareConvergence: controls.glareConvergence / 100,
-          u_glareOppositeFactor: controls.glareOppositeFactor / 100,
-          u_glareFactor: controls.glareFactor / 100,
-          STEP: controls.step,
+          u_refThickness: controls.refThickness,
+          // You might need to manage and pass background textures here
+          // u_bg: bgTexture,
+          // u_blurredBg: blurredBgTexture,
         };
-      }
+        
+        // Render with OIT
+        const resultTexture = oitSystem.render(liquidShapes, globalUniforms);
+        
+        // Display result
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
 
-      renderer.render(passUniforms);
+        displayPass.render({ u_texture: resultTexture });
+        
+        gl.deleteTexture(resultTexture); // Clean up the texture after rendering
+
+      } else if (renderer) {
+        // --- Fallback Multi-Pass Render Path ---
+        // Update hover animation if active
+        if (stateRef.current.hoverAnimationStart !== null && stateRef.current.hoverShapeId) {
+          const now = performance.now();
+          const elapsed = now - stateRef.current.hoverAnimationStart;
+          const progress = Math.min(elapsed / stateRef.current.hoverAnimationDuration, 1.0);
+          
+          // Update hover shape with current animation progress
+          const originalShape = stateRef.current.hoveredShapeId 
+            ? stateRef.current.shapeManager.getShape(stateRef.current.hoveredShapeId)
+            : null;
+          
+          if (originalShape) {
+            const currentCanvasInfo = stateRef.current.canvasInfo;
+            const hoverShapeData = createHoverShape(originalShape, progress, currentCanvasInfo);
+            stateRef.current.shapeManager.updateShape(stateRef.current.hoverShapeId, hoverShapeData);
+          }
+          
+          // Stop animation when complete
+          if (progress >= 1.0) {
+            stateRef.current.hoverAnimationStart = null;
+          }
+        }
+
+        // Check if shapes have changed and rebuild passes if needed
+        const currentShapesState = stateRef.current.shapeManager.serialize();
+        if (currentShapesState !== stateRef.current.lastShapesState) {
+          const currentShapes = stateRef.current.shapeManager.getVisibleShapes();
+          const newPasses = buildLayeredRenderPasses(currentShapes);
+          renderer.rebuildPasses(newPasses);
+          stateRef.current.lastShapesState = currentShapesState;
+        }
+
+        const canvasInfo = stateRef.current.canvasInfo;
+        const textureUrl = stateRef.current.bgTextureUrl;
+        if (
+          !lastState.canvasInfo ||
+          lastState.canvasInfo.width !== canvasInfo.width ||
+          lastState.canvasInfo.height !== canvasInfo.height ||
+          lastState.canvasInfo.dpr !== canvasInfo.dpr
+        ) {
+          gl.viewport(
+            0,
+            0,
+            Math.round(canvasInfo.width * canvasInfo.dpr),
+            Math.round(canvasInfo.height * canvasInfo.dpr),
+          );
+          renderer.resize(canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr);
+          renderer.setUniform('u_resolution', [
+            canvasInfo.width * canvasInfo.dpr,
+            canvasInfo.height * canvasInfo.dpr,
+          ]);
+        }
+        if (textureUrl !== lastState.bgTextureUrl) {
+          if (lastState.bgTextureType === 'video') {
+            if (lastState.controls?.bgType !== undefined) {
+              stateRef.current.bgVideoEls.get(lastState.controls.bgType)?.pause();
+            }
+          }
+          if (!textureUrl) {
+            if (stateRef.current.bgTexture) {
+              gl.deleteTexture(stateRef.current.bgTexture);
+              stateRef.current.bgTexture = null;
+              stateRef.current.bgTextureType = null;
+            }
+          } else {
+            if (stateRef.current.bgTextureType === 'image') {
+              const rafId = requestAnimationFrame(() => {
+                stateRef.current.bgTextureReady = false;
+              });
+              loadTextureFromURL(gl, textureUrl).then(({ texture, ratio }) => {
+                if (stateRef.current.bgTextureUrl === textureUrl) {
+                  cancelAnimationFrame(rafId);
+                  stateRef.current.bgTexture = texture;
+                  stateRef.current.bgTextureRatio = ratio;
+                  stateRef.current.bgTextureReady = true;
+                }
+              });
+            } else if (stateRef.current.bgTextureType === 'video') {
+              stateRef.current.bgTextureReady = false;
+              stateRef.current.bgTexture = createEmptyTexture(gl);
+              stateRef.current.bgVideoEls.get(stateRef.current.controls.bgType)?.play();
+            }
+          }
+        }
+        lastState.controls = stateRef.current.controls;
+        lastState.bgTextureType = stateRef.current.bgTextureType;
+        lastState.canvasInfo = canvasInfo;
+        lastState.bgTextureUrl = stateRef.current.bgTextureUrl;
+
+        if (stateRef.current.bgTextureType === 'video') {
+          const videoEl = stateRef.current.bgVideoEls.get(stateRef.current.controls.bgType);
+          if (stateRef.current.bgTexture && videoEl) {
+            const info = updateVideoTexture(gl, stateRef.current.bgTexture, videoEl);
+
+            if (info) {
+              stateRef.current.bgTextureRatio = info.ratio;
+              stateRef.current.bgTextureReady = true;
+            }
+          }
+        }
+
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        const controls = stateRef.current.controls;
+
+        const shapeSizeSpring = {
+          x: controls.shapeWidth,
+          y: undefined,
+        };
+
+
+        // Set global uniforms that apply to all passes
+        renderer.setUniforms({
+          u_resolution: [canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr],
+          u_dpr: canvasInfo.dpr,
+          u_blurWeights: stateRef.current.blurWeights,
+          u_blurRadius: stateRef.current.controls.blurRadius,
+          u_mouse: [stateRef.current.canvasPointerPos.x, stateRef.current.canvasPointerPos.y],
+          u_glareAngle: (controls.glareAngle * Math.PI) / 180,
+        });
+
+        // Build pass-specific uniforms
+        
+        const passUniforms: Record<string, Record<string, any>> = {
+          bgPass: {
+            u_bgType: controls.bgType,
+            u_bgTexture: (stateRef.current.bgTextureUrl && stateRef.current.bgTexture) ?? undefined,
+            u_bgTextureRatio:
+              stateRef.current.bgTextureUrl && stateRef.current.bgTexture
+                ? stateRef.current.bgTextureRatio
+                : undefined,
+            u_bgTextureReady: stateRef.current.bgTextureReady ? 1 : 0,
+            u_shadowExpand: controls.shadowExpand,
+            u_shadowFactor: controls.shadowFactor / 100,
+            u_shadowPosition: [-controls.shadowPosition.x, -controls.shadowPosition.y],
+            // For background shadows, we still need all shapes
+            u_shapeCount: stateRef.current.shapeManager.getVisibleShapes().length,
+            u_shapePositions: stateRef.current.shapeManager.getShapeDataForShader().positions,
+            u_shapeSizes: stateRef.current.shapeManager.getShapeDataForShader().sizes,
+            u_shapeRadii: stateRef.current.shapeManager.getShapeDataForShader().radii,
+            u_shapeRoundnesses: stateRef.current.shapeManager.getShapeDataForShader().roundnesses,
+            u_shapeVisibilities: stateRef.current.shapeManager.getShapeDataForShader().visibilities,
+            u_shapeZIndices: stateRef.current.shapeManager.getShapeDataForShader().zIndices,
+            u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader().isHoverShape,
+            u_mergeRatio: controls.mergeRatio,
+          },
+        };
+
+        // Add uniforms for the single shape mask pass (much simpler!)
+        const currentShapes = stateRef.current.shapeManager.getVisibleShapes();
+        
+        if (currentShapes.length > 0) {
+          // Only need uniforms for the single allShapesMask pass
+          passUniforms.allShapesMask = {
+            u_shapeCount: currentShapes.length,
+            u_shapePositions: stateRef.current.shapeManager.getShapeDataForShader().positions,
+            u_shapeSizes: stateRef.current.shapeManager.getShapeDataForShader().sizes,
+            u_shapeRadii: stateRef.current.shapeManager.getShapeDataForShader().radii,
+            u_shapeRoundnesses: stateRef.current.shapeManager.getShapeDataForShader().roundnesses,
+            u_shapeVisibilities: stateRef.current.shapeManager.getShapeDataForShader().visibilities,
+            u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader().isHoverShape,
+            u_mergeRatio: controls.mergeRatio,
+          };
+        }
+
+        // Add uniforms for each z-index layer (simplified)
+        const currentPasses = buildLayeredRenderPasses(currentShapes);
+        
+        // Group shapes by z-index for uniform generation
+        const zIndexGroups = new Map<number, Shape[]>();
+        currentShapes.forEach(shape => {
+          if (!zIndexGroups.has(shape.zIndex)) {
+            zIndexGroups.set(shape.zIndex, []);
+          }
+          zIndexGroups.get(shape.zIndex)!.push(shape);
+        });
+        
+        // Add uniforms for each z-index layer
+        const zIndexValues = Array.from(zIndexGroups.keys()).sort((a, b) => a - b);
+        for (let i = 0; i < zIndexValues.length; i++) {
+          const zIndex = zIndexValues[i];
+          const shapesInGroup = zIndexGroups.get(zIndex)!;
+          const passName = `zIndexLayer_${zIndex}`;
+          
+          // Get tint - prioritize hover shape tint if present, otherwise use first shape's tint
+          let groupTint: ColorValue;
+          const hoverShape = shapesInGroup.find(s => s.id === 'hover_shape');
+          if (hoverShape && stateRef.current.hoveredShapeId) {
+            // Use the tint of the original hovered shape for the hover shape
+            const hoveredShapeDef = stateRef.current.shapeDefinitions.find(def => def.id === stateRef.current.hoveredShapeId);
+            groupTint = hoveredShapeDef ? hoveredShapeDef.tint : controls.tint;
+          } else {
+            // Use the tint of the first shape in the group
+            const firstShape = shapesInGroup[0];
+            const shapeDef = stateRef.current.shapeDefinitions.find(def => def.id === firstShape.id);
+            groupTint = shapeDef ? shapeDef.tint : controls.tint;
+          }
+          
+          // Create shape data for this z-index group only
+          const groupShapeData = {
+            positions: [] as number[],
+            sizes: [] as number[],
+            radii: [] as number[],
+            roundnesses: [] as number[],
+            visibilities: [] as number[],
+            zIndices: [] as number[],
+            isHoverShape: [] as number[],
+          };
+          
+          // Fill data for shapes in this group (up to 20 shapes max)
+          for (let j = 0; j < 20; j++) {
+            if (j < shapesInGroup.length) {
+              const shape = shapesInGroup[j];
+              groupShapeData.positions.push(shape.position.x, shape.position.y);
+              groupShapeData.sizes.push(shape.size.width, shape.size.height);
+              groupShapeData.radii.push(shape.radius);
+              groupShapeData.roundnesses.push(shape.roundness);
+              groupShapeData.visibilities.push(shape.visible ? 1.0 : 0.0);
+              groupShapeData.zIndices.push(shape.zIndex);
+              groupShapeData.isHoverShape.push(shape.id === 'hover_shape' ? 1.0 : 0.0);
+            } else {
+              // Fill with default values for unused slots
+              groupShapeData.positions.push(0, 0);
+              groupShapeData.sizes.push(0, 0);
+              groupShapeData.radii.push(0);
+              groupShapeData.roundnesses.push(0);
+              groupShapeData.visibilities.push(0);
+              groupShapeData.zIndices.push(0);
+              groupShapeData.isHoverShape.push(0.0);
+            }
+          }
+          
+          passUniforms[passName] = {
+            // Group shape data for blob merging
+            u_shapeCount: shapesInGroup.length,
+            u_shapePositions: groupShapeData.positions,
+            u_shapeSizes: groupShapeData.sizes,
+            u_shapeRadii: groupShapeData.radii,
+            u_shapeRoundnesses: groupShapeData.roundnesses,
+            u_shapeVisibilities: groupShapeData.visibilities,
+            u_shapeZIndices: groupShapeData.zIndices,
+            u_isHoverShape: groupShapeData.isHoverShape,
+            u_mergeRatio: controls.mergeRatio,
+            
+            // Glass effect properties - using group tint
+            u_tint: [
+              groupTint.r / 255,
+              groupTint.g / 255,
+              groupTint.b / 255,
+              groupTint.a,
+            ],
+            u_refThickness: controls.refThickness,
+            u_refFactor: controls.refFactor,
+            u_refDispersion: controls.refDispersion,
+            u_refFresnelRange: controls.refFresnelRange,
+            u_refFresnelHardness: controls.refFresnelHardness / 100,
+            u_refFresnelFactor: controls.refFresnelFactor / 100,
+            u_glareRange: controls.glareRange,
+            u_glareHardness: controls.glareHardness / 100,
+            u_glareConvergence: controls.glareConvergence / 100,
+            u_glareOppositeFactor: controls.glareOppositeFactor / 100,
+            u_glareFactor: controls.glareFactor / 100,
+            STEP: controls.step,
+          };
+        }
+
+        renderer.render(passUniforms);
+      }
     };
     raf = requestAnimationFrame(render);
 
@@ -899,8 +980,11 @@ function App() {
       if (raf) {
         cancelAnimationFrame(raf);
       }
+      oitSystem?.dispose(); 
+      displayPass?.dispose();
+      renderer?.dispose();
     };
-  }, []);
+  }, [oitSystem, displayPass, gl, canvasInfo, controls]);
 
   return (
     <>

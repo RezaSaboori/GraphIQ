@@ -746,3 +746,87 @@ export function updateVideoTexture(
     ratio: ratio,
   }
 }
+
+export class ComputeShader {
+  private gl: WebGL2RenderingContext;
+  private program: WebGLProgram;
+  private uniforms: Map<string, WebGLUniformLocation> = new Map();
+
+  constructor(gl: WebGL2RenderingContext, source: string) {
+    this.gl = gl;
+    this.program = this.createComputeProgram(source);
+    this.detectUniforms();
+  }
+
+  private createComputeProgram(source: string): WebGLProgram {
+    const gl = this.gl;
+    const shader = gl.createShader(gl.COMPUTE_SHADER);
+    if (!shader) throw new Error("Failed to create compute shader");
+
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      const info = gl.getShaderInfoLog(shader);
+      gl.deleteShader(shader);
+      throw new Error(`Compute shader compile error: ${info}`);
+    }
+
+    const program = gl.createProgram();
+    if (!program) throw new Error("Failed to create program");
+
+    gl.attachShader(program, shader);
+    gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      const info = gl.getProgramInfoLog(program);
+      gl.deleteProgram(program);
+      throw new Error(`Program link error: ${info}`);
+    }
+
+    gl.deleteShader(shader);
+    return program;
+  }
+
+  public use(): void {
+    this.gl.useProgram(this.program);
+  }
+
+  public dispatch(workGroupsX: number, workGroupsY: number, workGroupsZ: number = 1): void {
+    this.gl.dispatchCompute(workGroupsX, workGroupsY, workGroupsZ);
+    this.gl.memoryBarrier(this.gl.SHADER_STORAGE_BARRIER_BIT);
+  }
+
+  public setUniform(name: string, value: any): void {
+    const location = this.uniforms.get(name);
+    if (!location) return;
+    
+    // Set uniform based on type
+    if (typeof value === 'number') {
+      this.gl.uniform1f(location, value);
+    } else if (Array.isArray(value)) {
+      if (value.length === 2) this.gl.uniform2fv(location, value);
+      else if (value.length === 3) this.gl.uniform3fv(location, value);
+      else if (value.length === 4) this.gl.uniform4fv(location, value);
+    }
+  }
+
+  private detectUniforms(): void {
+    const gl = this.gl;
+    const numUniforms = gl.getProgramParameter(this.program, gl.ACTIVE_UNIFORMS);
+    
+    for (let i = 0; i < numUniforms; i++) {
+      const info = gl.getActiveUniform(this.program, i);
+      if (!info) continue;
+      const location = gl.getUniformLocation(this.program, info.name);
+      if (location) {
+        this.uniforms.set(info.name, location);
+      }
+    }
+  }
+
+  public dispose(): void {
+    this.gl.deleteProgram(this.program);
+    this.uniforms.clear();
+  }
+}
