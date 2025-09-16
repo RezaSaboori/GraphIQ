@@ -1,104 +1,83 @@
-# 🔮 Liquid Glass Studio
+## Liquid Glass Studio
 
-![frontPhoto](./.github/assets/title.png)
+A real‑time WebGL2 "liquid glass" compositor built with React + Vite. Shapes are loaded from a dataset JSON and rendered in layered passes with blur, refraction, and glare effects. You can drag groups by z‑index, hover to spawn a merging bubble, and tweak appearance via the control panel.
 
-[English](README.md)
+### Features
+- **Dataset‑driven shapes**: define shapes in `public/datasets/shapes.json`.
+- **Layered rendering**: grouped by `zIndex` with per‑group tint and merged blobs.
+- **Single-pass background blur**: optimized shape mask with vertical + horizontal blur.
+- **Interactive**: drag shapes (grouped by `zIndex`), hover merge animation.
+- **Controls**: refraction, glare, blur radius, tint, and background settings.
 
-The Ultimate Web Recreation of Apple’s Liquid Glass UI, powered by WebGL2 and shaders. Includes most Liquid Glass features with fine-grained controls for detailed customization.
-
-## Online Demo
-
-https://liquid-glass-studio.vercel.app/
-
-
-## ScreenShots
-
-<table align="center">
-  <tr>
-    <td><img src="./.github/assets/title-video.gif" width="240" ></td>
-    <td><img src="./.github/assets/screen-shot-1.png" width="240" /></td>
-    <td><img src="./.github/assets/screen-shot-2.png" width="240" /></td>
-  </tr>
-  <tr>
-    <td><img src="./.github/assets/screen-shot-3.png" width="240" /></td>
-    <td><img src="./.github/assets/screen-shot-4.png" width="240" /></td>
-  </tr>
-</table>
-
-## Features
-
-**✨ Apple Liquid Glass Effects:**
-
-- Refraction
-- Dispersion
-- Fresnel reflection
-- Superellipse shapes
-- Blob effect (shape merging)
-- Glare with customizable angle
-- Gaussian blur masking
-- Anti-aliasing
-
-**⚙️ Interactive Controls:**
-
-- Comprehensive real-time parameter adjustments via an intuitive UI
-
-**🖼 Background Options:**
-
-- Support for both images and videos as dynamic backgrounds
-
-**🎞 Animation Support:**
-
-- Spring-based shape animations with configurable behavior
-
-## Technical Highlights
-
-- WebGL-based rendering for high-performance graphics
-- Multipass rendering for high-quality & performant Gaussian blur
-- Using SDF Defined shapes and smooth merge function
-- Custom shader implementations for realistic glass effects
-- Custom Leva UI components for intuitive parameter controls
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js (latest LTS version recommended)
-- pnpm package manager
-
-### Installation
-
+### Quick start
 ```bash
-# Install dependencies
+# Install
+npm install
+# or
 pnpm install
 
-# Start development server
-pnpm dev
+# Dev server
+npm run dev
 
-# Build for production
-pnpm build
+# Build
+npm run build
+
+# Preview build
+npm run preview
 ```
 
-## TODO
+Open the app in your browser (the dev server prints the URL, usually `http://localhost:5173`).
 
-- [x] More Glare Controls (hardness / color / size etc.)
-- [x] Custom Background
-- [ ] Self-illumination
-- [ ] HDR illumination
-- [ ] Glass Presets
-- [ ] Control parameter import / export
-- [x] Render Step view to show intermediate results
-- [ ] UI Content inside of shape
+### Dataset: defining shapes
+Shapes are loaded at runtime from:
+- `public/datasets/shapes.json`
 
-## Credits
+Each item uses this schema:
+```json
+[
+  {
+    "id": "shape1",
+    "position": { "x": 100, "y": 0 },
+    "size": { "height": 200 },
+    "zIndex": 0,
+    "tint": { "r": 255, "g": 0, "b": 0, "a": 0.6 }
+  }
+]
+```
+Notes:
+- **width**: comes from the live control `shapeWidth` (same width for all shapes). Heights and positions come from the dataset.
+- **DPR scaling**: `position.x`, `position.y`, and `size.height` are multiplied by device pixel ratio at load to keep visuals crisp on HiDPI screens.
+- **tint**: `r/g/b` are `0‑255`, `a` is `0‑1`.
+- **zIndex**: shapes with the same value merge into a single "blob" layer and drag together.
 
-Thanks to the following resources and inspirations:
+### Controls & interactions
+- **Mouse**:
+  - Hover a shape: creates a small merge bubble that animates from its corner.
+  - Drag: click a shape to drag the entire group with the same `zIndex`.
+- **Keyboard**:
+  - `1`, `2`, `3`…: select shapes by index (for logging/inspection).
+  - `Space`: cycle selected shape.
+  - `+` / `=`: increase selected shape `zIndex`.
+  - `-`: decrease selected shape `zIndex` (not below `0`).
 
-- [SDF functions](https://iquilezles.org/articles/distfunctions2d/) and [smooth merge function](https://iquilezles.org/articles/smin/) by [Inigo Quilez](https://iquilezles.org/)
-- Sample photo (Buildings) by <a href="https://unsplash.com/@anewevisual?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash">Adrian Newell</a> on <a href="https://unsplash.com/photos/a-row-of-multicolored-houses-on-a-street-UtfxJZ-uy5Q?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash">Unsplash</a>
-- Sample video (Fish / Traffic) by Tom Fisk from [Pexels](https://www.pexels.com/video/light-city-road-traffic-4062991/)
-- Sample video (Flower) by Pixabay from [Pexels](https://www.pexels.com/video/orange-flowers-856383/)
-- Sample Photo by Apple and Tim Cook
+### Backgrounds
+The background can be configured via the controls (images or videos). Video frames update the background texture each frame for refraction.
 
-## License
+### Project structure (high level)
+- `src/App.tsx`: renderer setup, dataset loading, event handling, uniforms.
+- `src/utils/GLUtils.ts`: WebGL2 helpers, multipass renderer, textures.
+- `src/utils/ShapeManager.ts`: shape store, hit‑testing, grouping, serialization.
+- `src/shaders/*.glsl`: vertex + fragment shaders for bg, blur, main, and masks.
+- `public/datasets/shapes.json`: the shapes dataset.
 
-[MIT License](LICENSE)
+### Performance tips
+- Keep the number of visible shapes moderate. Shapes in the same `zIndex` merge efficiently, but total count still matters.
+- Blur radius impacts cost; try smaller values on low‑end devices.
+- Large video backgrounds are expensive; prefer images or compressed/short clips.
+
+### Large assets (videos)
+Some video assets exceed GitHub’s recommended file size and may trigger warnings. If you plan to keep large media in the repo, consider Git LFS:
+- `https://git-lfs.github.com`
+
+### License
+This project is licensed under the terms in `LICENSE`.
