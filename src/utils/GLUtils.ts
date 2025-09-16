@@ -485,6 +485,10 @@ export class RenderPass {
     return this.frameBuffer ? this.frameBuffer.getTexture() : null;
   }
 
+  public getDepthTexture(): WebGLTexture | null {
+    return this.frameBuffer ? this.frameBuffer.getDepthTexture() : null;
+  }
+
   public resize(width: number, height: number): void {
     if (this.frameBuffer) {
       this.frameBuffer.resize(width, height);
@@ -632,8 +636,17 @@ export class MultiPassRenderer {
       // 添加输入纹理
       if (pass.config.inputs) {
         Object.entries(pass.config.inputs).forEach(([uniformName, fromPassName]) => {
-          const fromPass = this.passes.get(fromPassName);
-          uniforms[uniformName] = fromPass?.getOutputTexture();
+          if (fromPassName) {
+            const isDepth = fromPassName.endsWith('_depth');
+            const realPassName = isDepth ? fromPassName.slice(0, -6) : fromPassName;
+            const fromPass = this.passes.get(realPassName);
+            if (fromPass) {
+              const texture = isDepth
+                ? (fromPass as any).getDepthTexture()
+                : fromPass.getOutputTexture();
+              uniforms[uniformName] = texture;
+            }
+          }
         })
       }
 
@@ -744,5 +757,37 @@ export function updateVideoTexture(
 
   return {
     ratio: ratio,
+  }
+}
+
+export class DepthPeelingBuffers {
+  frameBuffers: FrameBuffer[] = [];
+  depthTextures: WebGLTexture[] = [];
+  colorTextures: WebGLTexture[] = [];
+  N: number;
+  
+  constructor(gl: GL, nPeels: number, width: number, height: number) {
+    this.N = nPeels;
+    for (let i = 0; i < nPeels; i++) {
+      const fb = new FrameBuffer(gl, width, height);
+      this.frameBuffers.push(fb);
+      this.depthTextures.push(fb.getDepthTexture());
+      this.colorTextures.push(fb.getTexture());
+    }
+  }
+
+  public resize(width: number, height: number): void {
+    for (const fb of this.frameBuffers) {
+      fb.resize(width, height);
+    }
+  }
+
+  public dispose(): void {
+    for (const fb of this.frameBuffers) {
+      fb.dispose();
+    }
+    this.frameBuffers = [];
+    this.depthTextures = [];
+    this.colorTextures = [];
   }
 }

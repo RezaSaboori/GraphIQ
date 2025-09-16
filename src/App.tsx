@@ -19,9 +19,8 @@ import VertexShader from './shaders/vertex.glsl?raw';
 import FragmentBgShader from './shaders/fragment-bg.glsl?raw';
 import FragmentBgVblurShader from './shaders/fragment-bg-vblur.glsl?raw';
 import FragmentBgHblurShader from './shaders/fragment-bg-hblur.glsl?raw';
-import FragmentMainShader from './shaders/fragment-main.glsl?raw';
-import FragmentIndividualShader from './shaders/fragment-individual.glsl?raw';
-import FragmentLayeredShapeShader from './shaders/fragment-layered-shape.glsl?raw';
+import FragmentDepthPeelingShader from './shaders/fragment-depth-peel.glsl?raw';
+import FragmentCompositePeelsShader from './shaders/composite-peels.glsl?raw';
 import FragmentShapeMaskShader from './shaders/fragment-shape-mask.glsl?raw';
 import { Controller } from '@react-spring/web';
 import { capitalize, computeGaussianKernelByRadius } from './utils';
@@ -49,11 +48,10 @@ type ColorValue = {
   a: number;
 };
 
+const N_PEELS = 8;
+
 // Helper function to build layered render passes for shapes
-function buildLayeredRenderPasses(shapes: Shape[]): any[] {
-  // Sort shapes by zIndex (lowest to highest - back to front)
-  const sortedShapes = [...shapes].sort((a, b) => a.zIndex - b.zIndex);
-  
+function buildDepthPeelingPasses(shapes: Shape[], nPeels: number): any[] {
   const passes: any[] = [
     // Background pass
     {
@@ -66,7 +64,7 @@ function buildLayeredRenderPasses(shapes: Shape[]): any[] {
   ];
 
   // If we have shapes, add single blur for the background (much more efficient!)
-  if (sortedShapes.length > 0) {
+  if (shapes.length > 0) {
     // Create mask for ALL shapes (single background blur)
     passes.push({
       name: 'allShapesMask',
@@ -75,10 +73,9 @@ function buildLayeredRenderPasses(shapes: Shape[]): any[] {
         fragment: FragmentShapeMaskShader,
       },
       // This mask will include ALL shapes
-      shapesFromZIndex: -Infinity,
-      allShapes: sortedShapes,
+      allShapes: shapes,
     });
-    
+
     // Single vertical blur pass for background
     passes.push({
       name: 'vBlurPass',
@@ -91,7 +88,7 @@ function buildLayeredRenderPasses(shapes: Shape[]): any[] {
         u_shapeMask: 'allShapesMask',
       },
     });
-    
+
     // Single horizontal blur pass for background
     passes.push({
       name: 'hBlurPass',
@@ -105,50 +102,33 @@ function buildLayeredRenderPasses(shapes: Shape[]): any[] {
       },
     });
   }
-  
-  // Group shapes by z-index for blob merging within same z-index, layered rendering between z-indices
-  const zIndexGroups = new Map<number, Shape[]>();
-  sortedShapes.forEach(shape => {
-    if (!zIndexGroups.has(shape.zIndex)) {
-      zIndexGroups.set(shape.zIndex, []);
-    }
-    zIndexGroups.get(shape.zIndex)!.push(shape);
-  });
-  
-  // Add layered passes (simplified - all use same blurred background)
-  const zIndexValues = Array.from(zIndexGroups.keys()).sort((a, b) => a - b);
-  let previousLayerName = 'bgPass'; // Previous layer for compositing
-  
-  for (let i = 0; i < zIndexValues.length; i++) {
-    const zIndex = zIndexValues[i];
-    const shapesInGroup = zIndexGroups.get(zIndex)!;
-    const isLastGroup = i === zIndexValues.length - 1;
-    
-    // Add the shape layer
-    const layerName = `zIndexLayer_${zIndex}`;
+
+  // Depth peeling passes
+  for (let peel = 0; peel < nPeels; peel++) {
     passes.push({
-      name: layerName,
+      name: `peel_${peel}`,
       shader: {
         vertex: VertexShader,
-        fragment: FragmentMainShader, // Use main shader for blob merging within z-index group
+        fragment: FragmentDepthPeelingShader,
       },
       inputs: {
-        u_blurredBg: sortedShapes.length > 0 ? 'hBlurPass' : 'bgPass', // Use single blurred background for all layers
-        u_bg: 'bgPass', // Keep original background for fallback
-        u_previousLayer: previousLayerName, // Previous layer for refraction between shapes
+        u_previousDepth: peel === 0 ? null : `peel_${peel - 1}_depth`,
       },
-      outputToScreen: isLastGroup, // Only the last z-index group outputs to screen
-      shapesInGroup: shapesInGroup, // Pass the shapes for this z-index
     });
-    
-    // Update previous layer name for next iteration
-    previousLayerName = layerName;
   }
-  
-  // If no shapes, add a simple pass-through
-  if (sortedShapes.length === 0) {
+
+  // Final compositing pass
+  const compositeInputs: Record<string, string | null> = {
+    u_blurredBg: shapes.length > 0 ? 'hBlurPass' : 'bgPass',
+    u_bg: 'bgPass',
+  };
+  for (let peel = 0; peel < nPeels; peel++) {
+    compositeInputs[`u_peelColor${peel}`] = `peel_${peel}`;
+  }
+
+  if (shapes.length === 0) {
     passes.push({
-      name: 'passthroughPass',
+      name: 'passthrough',
       shader: {
         vertex: VertexShader,
         fragment: FragmentBgShader,
@@ -158,8 +138,18 @@ function buildLayeredRenderPasses(shapes: Shape[]): any[] {
       },
       outputToScreen: true,
     });
+  } else {
+    passes.push({
+      name: 'composite',
+      shader: {
+        vertex: VertexShader,
+        fragment: FragmentCompositePeelsShader,
+      },
+      inputs: compositeInputs,
+      outputToScreen: true,
+    });
   }
-  
+
   return passes;
 }
 
@@ -229,7 +219,7 @@ function createHoverShape(
   };
 }
 
-function App() {
+export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasInfo, setCanvasInfo] = useState<{ width: number; height: number; dpr: number }>({
     width: window.innerWidth,
@@ -597,7 +587,7 @@ function App() {
 
     // Initial setup with current shapes
     const initialShapes = stateRef.current.shapeManager.getVisibleShapes();
-    const initialPasses = buildLayeredRenderPasses(initialShapes);
+    const initialPasses = buildDepthPeelingPasses(initialShapes, N_PEELS);
     const renderer = new MultiPassRenderer(canvasEl, initialPasses);
     stateRef.current.lastShapesState = stateRef.current.shapeManager.serialize();
 
@@ -646,7 +636,7 @@ function App() {
       const currentShapesState = stateRef.current.shapeManager.serialize();
       if (currentShapesState !== stateRef.current.lastShapesState) {
         const currentShapes = stateRef.current.shapeManager.getVisibleShapes();
-        const newPasses = buildLayeredRenderPasses(currentShapes);
+        const newPasses = buildDepthPeelingPasses(currentShapes, N_PEELS);
         renderer.rebuildPasses(newPasses);
         stateRef.current.lastShapesState = currentShapesState;
       }
@@ -785,106 +775,40 @@ function App() {
         };
       }
 
-      // Add uniforms for each z-index layer (simplified)
-      const currentPasses = buildLayeredRenderPasses(currentShapes);
-      
-      // Group shapes by z-index for uniform generation
-      const zIndexGroups = new Map<number, Shape[]>();
-      currentShapes.forEach(shape => {
-        if (!zIndexGroups.has(shape.zIndex)) {
-          zIndexGroups.set(shape.zIndex, []);
-        }
-        zIndexGroups.get(shape.zIndex)!.push(shape);
-      });
-      
-      // Add uniforms for each z-index layer
-      const zIndexValues = Array.from(zIndexGroups.keys()).sort((a, b) => a - b);
-      for (let i = 0; i < zIndexValues.length; i++) {
-        const zIndex = zIndexValues[i];
-        const shapesInGroup = zIndexGroups.get(zIndex)!;
-        const passName = `zIndexLayer_${zIndex}`;
-        
-        // Get tint - prioritize hover shape tint if present, otherwise use first shape's tint
-        let groupTint: ColorValue;
-        const hoverShape = shapesInGroup.find(s => s.id === 'hover_shape');
-        if (hoverShape && stateRef.current.hoveredShapeId) {
-          // Use the tint of the original hovered shape for the hover shape
-          const hoveredShapeDef = stateRef.current.shapeDefinitions.find(def => def.id === stateRef.current.hoveredShapeId);
-          groupTint = hoveredShapeDef ? hoveredShapeDef.tint : controls.tint;
-        } else {
-          // Use the tint of the first shape in the group
-          const firstShape = shapesInGroup[0];
-          const shapeDef = stateRef.current.shapeDefinitions.find(def => def.id === firstShape.id);
-          groupTint = shapeDef ? shapeDef.tint : controls.tint;
-        }
-        
-        // Create shape data for this z-index group only
-        const groupShapeData = {
-          positions: [] as number[],
-          sizes: [] as number[],
-          radii: [] as number[],
-          roundnesses: [] as number[],
-          visibilities: [] as number[],
-          zIndices: [] as number[],
-          isHoverShape: [] as number[],
-        };
-        
-        // Fill data for shapes in this group (up to 20 shapes max)
-        for (let j = 0; j < 20; j++) {
-          if (j < shapesInGroup.length) {
-            const shape = shapesInGroup[j];
-            groupShapeData.positions.push(shape.position.x, shape.position.y);
-            groupShapeData.sizes.push(shape.size.width, shape.size.height);
-            groupShapeData.radii.push(shape.radius);
-            groupShapeData.roundnesses.push(shape.roundness);
-            groupShapeData.visibilities.push(shape.visible ? 1.0 : 0.0);
-            groupShapeData.zIndices.push(shape.zIndex);
-            groupShapeData.isHoverShape.push(shape.id === 'hover_shape' ? 1.0 : 0.0);
-          } else {
-            // Fill with default values for unused slots
-            groupShapeData.positions.push(0, 0);
-            groupShapeData.sizes.push(0, 0);
-            groupShapeData.radii.push(0);
-            groupShapeData.roundnesses.push(0);
-            groupShapeData.visibilities.push(0);
-            groupShapeData.zIndices.push(0);
-            groupShapeData.isHoverShape.push(0.0);
-          }
-        }
-        
-        passUniforms[passName] = {
-          // Group shape data for blob merging
-          u_shapeCount: shapesInGroup.length,
-          u_shapePositions: groupShapeData.positions,
-          u_shapeSizes: groupShapeData.sizes,
-          u_shapeRadii: groupShapeData.radii,
-          u_shapeRoundnesses: groupShapeData.roundnesses,
-          u_shapeVisibilities: groupShapeData.visibilities,
-          u_shapeZIndices: groupShapeData.zIndices,
-          u_isHoverShape: groupShapeData.isHoverShape,
-          u_mergeRatio: controls.mergeRatio,
-          
-          // Glass effect properties - using group tint
-          u_tint: [
-            groupTint.r / 255,
-            groupTint.g / 255,
-            groupTint.b / 255,
-            groupTint.a,
-          ],
-          u_refThickness: controls.refThickness,
-          u_refFactor: controls.refFactor,
-          u_refDispersion: controls.refDispersion,
-          u_refFresnelRange: controls.refFresnelRange,
-          u_refFresnelHardness: controls.refFresnelHardness / 100,
-          u_refFresnelFactor: controls.refFresnelFactor / 100,
-          u_glareRange: controls.glareRange,
-          u_glareHardness: controls.glareHardness / 100,
-          u_glareConvergence: controls.glareConvergence / 100,
-          u_glareOppositeFactor: controls.glareOppositeFactor / 100,
-          u_glareFactor: controls.glareFactor / 100,
-          STEP: controls.step,
-        };
+      const allShapesData = stateRef.current.shapeManager.getShapeDataForShader();
+
+      const peelUniforms = {
+        u_shapeCount: allShapesData.count,
+        u_shapePositions: allShapesData.positions,
+        u_shapeSizes: allShapesData.sizes,
+        u_shapeRadii: allShapesData.radii,
+        u_shapeRoundnesses: allShapesData.roundnesses,
+        u_shapeVisibilities: allShapesData.visibilities,
+        u_shapeZIndices: allShapesData.zIndices,
+        u_isHoverShape: allShapesData.isHoverShape,
+        u_shapeTints: allShapesData.tints,
+        u_mergeRatio: controls.mergeRatio,
+        u_refThickness: controls.refThickness,
+        u_refFactor: controls.refFactor,
+        u_refDispersion: controls.refDispersion,
+        u_refFresnelRange: controls.refFresnelRange,
+        u_refFresnelHardness: controls.refFresnelHardness / 100,
+        u_refFresnelFactor: controls.refFresnelFactor / 100,
+        u_glareRange: controls.glareRange,
+        u_glareHardness: controls.glareHardness / 100,
+        u_glareConvergence: controls.glareConvergence / 100,
+        u_glareOppositeFactor: controls.glareOppositeFactor / 100,
+        u_glareFactor: controls.glareFactor / 100,
+        STEP: controls.step,
+      };
+
+      for (let i = 0; i < N_PEELS; i++) {
+        passUniforms[`peel_${i}`] = peelUniforms;
       }
+
+      passUniforms['composite'] = {
+        u_nPeels: N_PEELS,
+      };
 
       renderer.render(passUniforms);
     };
@@ -923,5 +847,3 @@ function App() {
     </>
   );
 }
-
-export default App;
