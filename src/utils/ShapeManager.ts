@@ -198,7 +198,6 @@ export class ShapeManager {
     visibilities: number[];
     zIndices: number[];
     isHoverShape: number[]; // Track which shapes are hover shapes (1.0 for hover, 0.0 for regular)
-    tints: number[];
     count: number;
   } {
     const shapes = this.getVisibleShapes();
@@ -211,7 +210,6 @@ export class ShapeManager {
     const visibilities: number[] = [];
     const zIndices: number[] = [];
     const isHoverShape: number[] = [];
-    const tints: number[] = [];
     
     // Fill arrays with shape data
     for (let i = 0; i < maxShapes; i++) {
@@ -224,7 +222,6 @@ export class ShapeManager {
         visibilities.push(shape.visible ? 1.0 : 0.0);
         zIndices.push(shape.zIndex);
         isHoverShape.push(shape.id === 'hover_shape' ? 1.0 : 0.0);
-        tints.push(shape.color!.r / 255, shape.color!.g / 255, shape.color!.b / 255, shape.color!.a);
       } else {
         // Fill with default values for unused slots
         positions.push(0, 0);
@@ -234,7 +231,6 @@ export class ShapeManager {
         visibilities.push(0);
         zIndices.push(0);
         isHoverShape.push(0.0);
-        tints.push(0, 0, 0, 0);
       }
     }
     
@@ -246,7 +242,6 @@ export class ShapeManager {
       visibilities,
       zIndices,
       isHoverShape,
-      tints,
       count: Math.min(shapes.length, maxShapes),
     };
   }
