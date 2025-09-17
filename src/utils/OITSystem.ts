@@ -182,11 +182,7 @@ export class OITSystem {
     this.compositeShader.setUniform('u_refDispersion', globalUniforms.u_refDispersion || 0.0);
     
     // Other uniforms for composite shader like background textures
-    if (globalUniforms.u_blurredBg) {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, globalUniforms.u_blurredBg);
-        this.compositeShader.setUniform('u_blurredBg', 0);
-    }
+    // Removed blurred background binding; compositor samples u_bg or other inputs directly
     if (globalUniforms.u_bg) {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, globalUniforms.u_bg);

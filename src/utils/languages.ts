@@ -20,8 +20,7 @@ export default {
     'editor.glareOppositeFactor': 'Glare Opposite Side',
     'editor.glareFactor': 'Glare Intensity',
     'editor.glareAngle': 'Glare Angle',
-    'editor.blurRadius': 'Blur Radius',
-    'editor.blurMargin': 'Blur Margin',
+    
     'editor.tint': 'Tint',
     'editor.shadowExpand': 'Shadow Expand',
     'editor.shadowFactor': 'Shadow Intensity',

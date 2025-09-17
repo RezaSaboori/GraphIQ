@@ -15,7 +15,7 @@ layout(binding = 0, r32ui) uniform uimage2D headPointers;
 layout(binding = 1, rgba16f) uniform image2D outputImage;
 
 uniform vec2 u_resolution;
-uniform sampler2D u_blurredBg;
+uniform sampler2D u_bg;
 uniform sampler2D u_bg;
 
 // Liquid glass effect uniforms
@@ -25,14 +25,14 @@ uniform float u_refThickness;
 
 vec4 applyLiquidGlassEffects(vec4 fragmentColor, vec2 uv, float depth) {
     // Simplified liquid glass effects - integrate your full fragment-main.glsl logic here
-    vec4 bgColor = texture(u_blurredBg, uv);
+    vec4 bgColor = texture(u_bg, uv);
     vec4 refractedColor = mix(bgColor, fragmentColor, fragmentColor.a);
     
     // Apply chromatic dispersion based on depth and refractive properties
     vec2 dispersionOffset = vec2(depth * 0.001) * u_refDispersion;
-    vec4 dispersedR = texture(u_blurredBg, uv + dispersionOffset * 1.02);
-    vec4 dispersedG = texture(u_blurredBg, uv);
-    vec4 dispersedB = texture(u_blurredBg, uv - dispersionOffset * 1.02);
+    vec4 dispersedR = texture(u_bg, uv + dispersionOffset * 1.02);
+    vec4 dispersedG = texture(u_bg, uv);
+    vec4 dispersedB = texture(u_bg, uv - dispersionOffset * 1.02);
     
     vec4 dispersedBg = vec4(dispersedR.r, dispersedG.g, dispersedB.b, 1.0);
     refractedColor = mix(dispersedBg, fragmentColor, fragmentColor.a);

@@ -63,7 +63,7 @@ interface ControlsConfig {
   glareConvergence: ControlRange;
   glareOppositeFactor: ControlRange;
   glareAngle: ControlRange;
-  blurRadius: ControlRange;
+  
   mergeRatio: ControlRange;
   tint: TintControl;
   shadowExpand: ControlRange;
@@ -90,7 +90,7 @@ interface DefaultControls {
   glareConvergence: number;
   glareOppositeFactor: number;
   glareAngle: number;
-  blurRadius: number;
+  
   mergeRatio: number;
   tint: ColorValue;
   shadowExpand: number;
@@ -179,12 +179,7 @@ export const controlsConfig: ControlsConfig = {
     step: 0.01,
     value: -45,
   },
-  blurRadius: {
-    min: 1,
-    max: 200,
-    step: 1,
-    value: 1,
-  },
+  
   mergeRatio: {
     min: 0.01,
     max: 1.0,
@@ -273,7 +268,7 @@ export const defaultControls: DefaultControls = {
   glareConvergence: 50,
   glareOppositeFactor: 80,
   glareAngle: -45,
-  blurRadius:1,
+  
   mergeRatio: 0.01,
   tint: { r: 0, b: 255, g: 255, a: 0.6 },
   shadowExpand: 25,

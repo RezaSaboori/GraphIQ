@@ -20,14 +20,12 @@ import PassthroughFragmentShader from './shaders/fragment-passthrough.glsl?raw';
 
 import VertexShader from './shaders/vertex.glsl?raw';
 import FragmentBgShader from './shaders/fragment-bg.glsl?raw';
-import FragmentBgVblurShader from './shaders/fragment-bg-vblur.glsl?raw';
-import FragmentBgHblurShader from './shaders/fragment-bg-hblur.glsl?raw';
+ 
 import FragmentMainShader from './shaders/fragment-main.glsl?raw';
 import FragmentIndividualShader from './shaders/fragment-individual.glsl?raw';
 import FragmentLayeredShapeShader from './shaders/fragment-layered-shape.glsl?raw';
-import FragmentShapeMaskShader from './shaders/fragment-shape-mask.glsl?raw';
 import { Controller } from '@react-spring/web';
-import { capitalize, computeGaussianKernelByRadius } from './utils';
+ 
 
 import bgGrid from '@/assets/bg-grid.png';
 import bgBars from '@/assets/bg-bars.png';
@@ -69,46 +67,7 @@ function buildLayeredRenderPasses(shapes: Shape[]): any[] {
     },
   ];
 
-  // If we have shapes, add single blur for the background (much more efficient!)
-  if (sortedShapes.length > 0) {
-    // Create mask for ALL shapes (single background blur)
-    passes.push({
-      name: 'allShapesMask',
-      shader: {
-        vertex: VertexShader,
-        fragment: FragmentShapeMaskShader,
-      },
-      // This mask will include ALL shapes
-      shapesFromZIndex: -Infinity,
-      allShapes: sortedShapes,
-    });
-    
-    // Single vertical blur pass for background
-    passes.push({
-      name: 'vBlurPass',
-      shader: {
-        vertex: VertexShader,
-        fragment: FragmentBgVblurShader,
-      },
-      inputs: {
-        u_prevPassTexture: 'bgPass',
-        u_shapeMask: 'allShapesMask',
-      },
-    });
-    
-    // Single horizontal blur pass for background
-    passes.push({
-      name: 'hBlurPass',
-      shader: {
-        vertex: VertexShader,
-        fragment: FragmentBgHblurShader,
-      },
-      inputs: {
-        u_prevPassTexture: 'vBlurPass',
-        u_shapeMask: 'allShapesMask',
-      },
-    });
-  }
+  // No blur passes; keep only background and shape layers
   
   // Group shapes by z-index for blob merging within same z-index, layered rendering between z-indices
   const zIndexGroups = new Map<number, Shape[]>();
@@ -137,9 +96,8 @@ function buildLayeredRenderPasses(shapes: Shape[]): any[] {
         fragment: FragmentMainShader, // Use main shader for blob merging within z-index group
       },
       inputs: {
-        u_blurredBg: sortedShapes.length > 0 ? 'hBlurPass' : 'bgPass', // Use single blurred background for all layers
-        u_bg: 'bgPass', // Keep original background for fallback
-        u_previousLayer: previousLayerName, // Previous layer for refraction between shapes
+        u_bg: 'bgPass',
+        u_previousLayer: previousLayerName,
       },
       outputToScreen: isLastGroup, // Only the last z-index group outputs to screen
       shapesInGroup: shapesInGroup, // Pass the shapes for this z-index
@@ -256,7 +214,6 @@ function App() {
     } | null;
     canvasPointerPos: { x: number; y: number };
     controls: typeof controls;
-    blurWeights: number[];
     bgTextureUrl: string | null;
     bgTexture: WebGLTexture | null;
     bgTextureRatio: number;
@@ -289,7 +246,6 @@ function App() {
       y: 0,
     },
     controls,
-    blurWeights: [],
     bgTextureUrl: null,
     bgTexture: null,
     bgTextureRatio: 1,
@@ -331,9 +287,7 @@ function App() {
   // }, [controls.language]);
 
 
-  useMemo(() => {
-    stateRef.current.blurWeights = computeGaussianKernelByRadius(controls.blurRadius);
-  }, [controls.blurRadius]);
+  // Removed blur kernel computation
 
   // Load shapes dataset from public/datasets/shapes.json and initialize ShapeManager
   useEffect(() => {
@@ -815,8 +769,6 @@ function App() {
         renderer.setUniforms({
           u_resolution: [canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr],
           u_dpr: canvasInfo.dpr,
-          u_blurWeights: stateRef.current.blurWeights,
-          u_blurRadius: stateRef.current.controls.blurRadius,
           u_mouse: [stateRef.current.canvasPointerPos.x, stateRef.current.canvasPointerPos.y],
           u_glareAngle: (controls.glareAngle * Math.PI) / 180,
         });

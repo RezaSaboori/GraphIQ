@@ -1,4 +1,4 @@
-#version 300 es
+ #version 300 es
 // Individual shape shader for layered refraction system
 precision highp float;
 
@@ -9,7 +9,7 @@ const float N_G = 1.0;
 const float N_B = 1.0 + 0.02;
 
 in vec2 v_uv;
-uniform sampler2D u_blurredBg;
+uniform sampler2D u_bg;
 uniform sampler2D u_bg;
 uniform sampler2D u_previousLayer; // The accumulated layers behind this shape
 uniform vec2 u_resolution;
@@ -307,7 +307,7 @@ void main() {
       if (edgeFactor <= 0.0) {
         // Inside the shape - use the appropriate texture with tint
         if (u_isFirstLayer) {
-          outColor = texture(u_blurredBg, v_uv);
+          outColor = texture(u_bg, v_uv);
         } else {
           outColor = texture(u_previousLayer, v_uv);
         }
@@ -320,7 +320,7 @@ void main() {
         vec4 refractedPixel;
         if (u_isFirstLayer) {
           refractedPixel = getTextureDispersion(
-            u_blurredBg,
+            u_bg,
             -normal *
               edgeFactor *
               0.05 *

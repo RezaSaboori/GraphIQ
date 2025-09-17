@@ -9,7 +9,7 @@ const float N_G = 1.0;
 const float N_B = 1.0 + 0.02;
 
 in vec2 v_uv;
-uniform sampler2D u_blurredBg;
+// Removed blurred background dependency
 uniform sampler2D u_bg;
 uniform sampler2D u_previousLayer; // Previous layer for layered rendering
 uniform vec2 u_resolution;
@@ -422,7 +422,7 @@ void main() {
     // add refaction
   } else if (STEP <= 5) {
     if (merged < 0.0) {
-      outColor = texture(u_blurredBg, v_uv);
+      outColor = texture(u_bg, v_uv);
     } else {
       outColor = texture(u_bg, v_uv);
     }
@@ -446,7 +446,7 @@ void main() {
         vec2(u_resolution.y / u_resolution1x.x, 1.0);
       
       // IDENTICAL processing for both areas
-      vec4 blurredPixel = getTextureDispersion(u_blurredBg, refractionOffset, u_refDispersion);
+      vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
       vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
       vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
       outColor = combinedRefraction;
@@ -499,7 +499,7 @@ void main() {
         vec2(u_resolution.y / u_resolution1x.x, 1.0);
       
       // IDENTICAL processing for both areas
-      vec4 blurredPixel = getTextureDispersion(u_blurredBg, refractionOffset, u_refDispersion);
+      vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
       vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
       vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
       outColor = combinedRefraction;
@@ -547,7 +547,7 @@ void main() {
         vec2(u_resolution.y / u_resolution1x.x, 1.0);
       
       // IDENTICAL processing for both areas
-      vec4 blurredPixel = getTextureDispersion(u_blurredBg, refractionOffset, u_refDispersion);
+      vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
       vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
       vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
       outColor = combinedRefraction;
@@ -590,7 +590,7 @@ void main() {
       
       // IDENTICAL COLOR PROCESSING for both interior and edge areas
       // Apply chromatic dispersion with calculated offset
-      vec4 blurredPixel = getTextureDispersion(u_blurredBg, refractionOffset, u_refDispersion);
+      vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
       vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
       
       // Apply same blending logic everywhere

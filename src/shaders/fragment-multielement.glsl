@@ -9,7 +9,7 @@ precision highp float;
 
 in vec2 v_uv;
 
-uniform sampler2D u_blurredBg;
+uniform sampler2D u_bg;
 uniform sampler2D u_bg;
 uniform vec2 u_resolution;
 uniform float u_dpr;
@@ -126,7 +126,7 @@ void main() {
       ? -getNormal(gl_FragCoord.xy) * edgeFactor * 0.05 * u_dpr * vec2(u_resolution.y / res1x.x, 1.0)
       : vec2(0.0);
 
-    vec4 blurredPixel = getTextureDispersion(u_blurredBg, refractionOffset, u_refDispersion);
+    vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
     vec4 finalColor = mix(blurredPixel, u_tint, u_tint.a * 0.8);
     fragColor = finalColor;
   } else {
