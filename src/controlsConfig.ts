@@ -84,6 +84,10 @@ interface Controls {
   ditherType: { value: number; options: { [key: string]: number } };
   maxShapesPerPass: ControlRange;
   enableDepthPrepass: { value: boolean };
+  // Selective transparency controls
+  enableSelectiveAlpha: { value: boolean };
+  tintAlphaThreshold: ControlRange;
+  effectComplexityThreshold: ControlRange;
 }
 
 // Removed per-shape tint controls from global config. Per-shape tints are defined per shape in App.tsx.
@@ -124,6 +128,10 @@ interface DefaultControls {
   bgType: number;
   canvasWidth: number;
   canvasHeight: number;
+  // Add new defaults
+  enableSelectiveAlpha: boolean;
+  tintAlphaThreshold: number;
+  effectComplexityThreshold: number;
 }
 
 // Control configuration values
@@ -280,17 +288,21 @@ export const controlsConfig: Controls = {
   },
   
   // Dithering controls
-  ditherStrength: { value: 0.8, min: 0.0, max: 1.0, step: 0.01 },
-  ditherType: { 
-    value: 2, 
-    options: { 
-      'Bayer Matrix': 0, 
-      'Hash Function': 1, 
-      'Blue Noise': 2, 
-      'Spatiotemporal': 3 
-    } 
+  ditherStrength: { value: 0.6, min: 0.0, max: 1.0, step: 0.01 }, // Reduced from 0.8
+  ditherType: {
+    value: 1, // Default to hash-based for better quality
+    options: {
+      'Smooth Blend': 0,  // No dithering
+      'Minimal Dither': 1, // Hash with stability
+      'Advanced Dither': 2 // Full quality
+    }
   },
-  
+
+  // Selective transparency controls
+  enableSelectiveAlpha: { value: true }, // Enable hybrid approach
+  tintAlphaThreshold: { value: 0.9, min: 0.5, max: 1.0, step: 0.01 }, // Smooth tint threshold
+  effectComplexityThreshold: { value: 0.3, min: 0.1, max: 0.8, step: 0.05 }, // When to use alpha testing
+
   // Performance optimization
   maxShapesPerPass: { value: 50, min: 20, max: 200, step: 10 },
   enableDepthPrepass: { value: false },
@@ -310,7 +322,6 @@ export const defaultControls: DefaultControls = {
   glareConvergence: 50,
   glareOppositeFactor: 80,
   glareAngle: -45,
-  
   mergeRatio: 0.01,
   tint: { r: 0, b: 255, g: 255, a: 0.6 },
   shadowExpand: 25,
@@ -323,15 +334,17 @@ export const defaultControls: DefaultControls = {
   step: 9,
   canvasWidth: window.innerWidth,
   canvasHeight: window.innerHeight,
-  ditherStrength: 0.8,
-  ditherType: 2,
+  ditherStrength: 0.6,
+  ditherType: 1,
   maxShapesPerPass: 50,
   enableDepthPrepass: false,
-  shapeAlpha: 0.4,
-  // Additional included values for completeness
+  shapeAlpha: 0.5,
   shapeHeight: 200,
   shapeSqueeze: 0.5,
   shapeCount: 100,
   shapeSpacing: 10,
   shapeDistribution: 'grid',
+  enableSelectiveAlpha: true,
+  tintAlphaThreshold: 0.9,
+  effectComplexityThreshold: 0.3,
 };

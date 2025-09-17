@@ -27,10 +27,10 @@ uniform float u_refFresnelRange;
 uniform float u_refFresnelFactor;
 uniform float u_refFresnelHardness;
 uniform float u_glareRange;
+uniform float u_glareHardness;
 uniform float u_glareConvergence;
 uniform float u_glareOppositeFactor;
 uniform float u_glareFactor;
-uniform float u_glareHardness;
 uniform float u_glareAngle;
 // Dynamic shape system - support up to 20 shapes
 uniform float u_shapeCount;
@@ -51,6 +51,11 @@ uniform int u_frameCount;
 uniform float u_ditherStrength; // Control dithering intensity (0.0 to 1.0)
 uniform int u_ditherType; // 0 = Bayer, 1 = Hash, 2 = Blue Noise, 3 = Temporal
 uniform sampler2D u_blueNoiseTex; // Blue noise texture for advanced dithering
+
+// Add new uniforms for selective transparency control
+uniform float u_enableSelectiveAlpha; // 0.0 = traditional blend, 1.0 = selective alpha testing
+uniform float u_tintAlphaThreshold; // Threshold for tint-only areas (default: 0.95)
+uniform float u_effectComplexityThreshold; // When to use alpha testing
 
 out vec4 fragColor;
 
@@ -122,6 +127,28 @@ float getAdvancedDitherThreshold(vec2 screenPos, float alpha, float time) {
     threshold = clamp(threshold + alphaBias, 0.0, 1.0);
     
     return threshold;
+}
+
+// Enhanced dithering function with quality levels - optimized for reduced noise
+float getSelectiveDitherThreshold(vec2 screenPos, float alpha, float time, int qualityLevel) {
+    if (qualityLevel == 0) {
+        // No dithering - smooth traditional blending
+        return 0.0;
+    } else if (qualityLevel == 1) {
+        // Minimal dithering - Bayer matrix with very low intensity
+        return bayerMatrix4x4(screenPos) * 0.15; // Further reduced intensity
+    } else if (qualityLevel == 2) {
+        // Medium quality - Blue noise for better visual quality
+        vec2 noiseUV = screenPos / vec2(textureSize(u_blueNoiseTex, 0));
+        float blueNoise = texture(u_blueNoiseTex, noiseUV).r;
+        
+        // Add minimal temporal variation
+        float temporalOffset = hash12(vec2(floor(time * 15.0), 0.0)) * 0.05;
+        return fract(blueNoise + temporalOffset) * 0.4; // Reduced intensity
+    } else {
+        // High quality - Advanced blue noise with temporal coherence
+        return getAdvancedDitherThreshold(screenPos, alpha, time) * 0.6; // Reduced intensity
+    }
 }
 
 float sdCircle(vec2 p, float r) {
@@ -208,7 +235,7 @@ float mainSDF(vec2 p) {
     // Convert shape position from screen to normalized coordinates
     vec2 shapePos = (u_shapePositions[i] - u_resolution.xy * 0.5) / u_resolution.y;
     vec2 shapeSize = u_shapeSizes[i] / u_resolution.y;
-    float shapeRadius = (u_shapeRadii[i] / 100.0) * min(shapeSize.x, shapeSize.y) * 0.5;
+    float shapeRadius = (u_shapeRadii[i] / 100.0) * 0.1; // Fixed radius reference independent of shape size
     float shapeRoundness = u_shapeRoundnesses[i];
     
     vec2 pn = shapePos + p / u_resolution.y;
@@ -414,366 +441,166 @@ vec4 getTextureDispersion(sampler2D tex, vec2 offset, float factor) {
 }
 
 void main() {
-  vec2 u_resolution1x = u_resolution.xy / u_dpr;
-  // Calculate distance to all shapes
-  float merged = mainSDF(gl_FragCoord.xy);
-
-  vec4 outColor;
-  // step 0: sdfs
-  if (STEP <= 0) {
-    float px = 2.0 / u_resolution.y;
-    vec3 col = merged > 0.0 ? vec3(1.0, 1.0, 1.0) * merged : vec3(1.0, 1.0, 1.0) * -merged * 2.0;
-    col *= 3.0;
-    col = mix(
-      col,
-      vec3(1.0),
-      1.0 - smoothstep(0.5 / u_resolution1x.y - px, 0.5 / u_resolution1x.y + px, abs(merged))
-    );
-    outColor = vec4(col, 1.0);
-  } else if (STEP <= 1) {
-    float px = 2.0 / u_resolution.y;
-    vec3 col = merged > 0.0 ? vec3(0.9, 0.6, 0.3) : vec3(0.65, 0.85, 1.0);
-    // 阴影
-    col *= 1.0 - exp(-0.03 * abs(merged) * u_resolution1x.y);
-    // 等高线
-    col *= 0.6 + 0.4 * smoothstep(-0.5, 0.5, cos(0.25 * abs(merged) * u_resolution1x.y * 2.0));
-    // 外层白框
-    col = mix(
-      col,
-      vec3(1.0),
-      1.0 - smoothstep(1.5 / u_resolution1x.y - px, 1.5 / u_resolution1x.y + px, abs(merged))
-    );
-    outColor = vec4(col, 1.0);
-    // step 1: normals
-  } else if (STEP <= 2) {
-    if (merged < 0.0) {
-      vec2 normal = getNormal(gl_FragCoord.xy);
-      vec3 normalColor = vec2ToRgb(normal);
-
-      float l = length(normal);
-
-      outColor = vec4(normalColor, l);
-    } else {
-      outColor = vec4(vec3(0.8), 0.0);
-    }
-    // step2: edge factors
-  } else if (STEP <= 3) {
-    if (merged < 0.0) {
-      float nmerged = -1.0 * (merged * u_resolution1x.y);
-
-      float x_R_ratio = 1.0 - nmerged / u_refThickness;
-      float thetaI = asin(pow(x_R_ratio, 2.0));
-      float thetaT = asin(1.0 / u_refFactor * sin(thetaI));
-      float edgeFactor = -1.0 * tan(thetaT - thetaI);
-      if (nmerged >= u_refThickness) {
-        edgeFactor = 0.0;
-      }
-
-      if (nmerged < u_refThickness) {
-        outColor = vec4(vec3(edgeFactor), 1.0);
-      } else {
-        outColor = vec4(vec3(0.0), 1.0);
-      }
-    } else {
-      outColor = vec4(0.0);
-    }
-    // step3: edge factor with normal
-  } else if (STEP <= 4) {
-    if (merged < 0.0) {
-      vec2 normal = getNormal(gl_FragCoord.xy);
-      vec3 normalColor = vec2ToRgb(normal);
-      float nmerged = -1.0 * (merged * u_resolution1x.y);
-
-      float x_R_ratio = 1.0 - nmerged / u_refThickness;
-      float thetaI = asin(pow(x_R_ratio, 2.0));
-      float thetaT = asin(1.0 / u_refFactor * sin(thetaI));
-      float edgeFactor = -1.0 * tan(thetaT - thetaI);
-      if (nmerged >= u_refThickness) {
-        edgeFactor = 0.0;
-      }
-
-      outColor = vec4(normalColor * edgeFactor * u_dpr, 1.0);
-    } else {
-      outColor = vec4(0.0);
-    }
-    // add refaction
-  } else if (STEP <= 5) {
-    if (merged < 0.0) {
-      outColor = texture(u_bg, v_uv);
-    } else {
-      outColor = texture(u_bg, v_uv);
-    }
-  } else if (STEP <= 6) {
-    if (merged < 0.0) {
-      vec2 normal = getNormal(gl_FragCoord.xy);
-      float nmerged = -1.0 * (merged * u_resolution1x.y);
-
-      float x_R_ratio = 1.0 - nmerged / u_refThickness;
-      float thetaI = asin(pow(x_R_ratio, 2.0));
-      float thetaT = asin(1.0 / u_refFactor * sin(thetaI));
-      float edgeFactor = -1.0 * tan(thetaT - thetaI);
-      // Will have value > 0 inside of shape, force normalize here
-      if (nmerged >= u_refThickness) {
-        edgeFactor = 0.0;
-      }
-
-      // UNIFIED PROCESSING: Calculate offset first, then apply identical processing
-      vec2 refractionOffset = (edgeFactor <= 0.0) ? vec2(0.0) : 
-        -getNormal(gl_FragCoord.xy) * edgeFactor * 0.05 * u_dpr * 
-        vec2(u_resolution.y / u_resolution1x.x, 1.0);
-      
-      // IDENTICAL processing for both areas
-      vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
-      vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
-      vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
-      outColor = combinedRefraction;
-    } else {
-      outColor = texture(u_bg, v_uv);
-    }
-    //
-  } else if (STEP <= 7) {
-    if (merged < 0.0) {
-      vec2 normal = getNormal(gl_FragCoord.xy);
-      float nmerged = -1.0 * (merged * u_resolution1x.y);
-
-      float x_R_ratio = 1.0 - nmerged / u_refThickness;
-      float thetaI = asin(pow(x_R_ratio, 2.0));
-      float thetaT = asin(1.0 / u_refFactor * sin(thetaI));
-      float edgeFactor = -1.0 * tan(thetaT - thetaI);
-      // Will have value > 0 inside of shape, force normalize here
-      if (nmerged >= u_refThickness) {
-        edgeFactor = 0.0;
-      }
-
-      // other fresnel implements:
-      // float r0 = pow((1.0 - u_refFactor) / (1.0 + u_refFactor), 2.0);
-      // float fresnelFactor = r0 + (1.0 - r0) * pow(1.0 - cos(thetaI), 5.0);
-      // if (fresnelFactor < 0.028) {
-      //   fresnelFactor = 0.0;
-      // }
-      // fresnelFactor *= 10.0;
-
-      // float fresnelFactor =
-      //   0.5 *
-      //   (pow(sin(thetaI - thetaT) / sin(thetaI + thetaT), 2.0) +
-      //     pow(tan(thetaI - thetaT) / tan(thetaI + thetaT), 2.0));
-      // fresnelFactor = clamp(fresnelFactor, 0.0, 1.0);
-
-      float fresnelFactor = clamp(
-        pow(
-          1.0 +
-            merged * u_resolution1x.y / 1500.0 * pow(500.0 / u_refFresnelRange, 2.0) +
-            u_refFresnelHardness,
-          5.0
-        ),
-        0.0,
-        1.0
-      );
-
-      // UNIFIED PROCESSING: Calculate offset first, then apply identical processing
-      vec2 refractionOffset = (edgeFactor <= 0.0) ? vec2(0.0) : 
-        -getNormal(gl_FragCoord.xy) * edgeFactor * 0.05 * u_dpr * 
-        vec2(u_resolution.y / u_resolution1x.x, 1.0);
-      
-      // IDENTICAL processing for both areas
-      vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
-      vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
-      vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
-      outColor = combinedRefraction;
-    } else {
-      outColor = texture(u_bg, v_uv);
-    }
-  } else if (STEP <= 8) {
-    if (merged < 0.0) {
-      float nmerged = -1.0 * (merged * u_resolution1x.y);
-
-      float x_R_ratio = 1.0 - nmerged / u_refThickness;
-      float thetaI = asin(pow(x_R_ratio, 2.0));
-      float thetaT = asin(1.0 / u_refFactor * sin(thetaI));
-      float edgeFactor = -1.0 * tan(thetaT - thetaI);
-      // Will have value > 0 inside of shape, force normalize here
-      if (nmerged >= u_refThickness) {
-        edgeFactor = 0.0;
-      }
-
-      float fresnelFactor = clamp(
-        pow(
-          1.0 +
-            merged * u_resolution1x.y / 1500.0 * pow(500.0 / u_refFresnelRange, 2.0) +
-            u_refFresnelHardness,
-          5.0
-        ),
-        0.0,
-        1.0
-      );
-
-      float glareGeoFactor = clamp(
-        pow(
-          1.0 +
-            merged * u_resolution1x.y / 1500.0 * pow(500.0 / u_glareRange, 2.0) +
-            u_glareHardness,
-          5.0
-        ),
-        0.0,
-        1.0
-      );
-
-      // UNIFIED PROCESSING: Calculate offset first, then apply identical processing
-      vec2 refractionOffset = (edgeFactor <= 0.0) ? vec2(0.0) : 
-        -getNormal(gl_FragCoord.xy) * edgeFactor * 0.05 * u_dpr * 
-        vec2(u_resolution.y / u_resolution1x.x, 1.0);
-      
-      // IDENTICAL processing for both areas
-      vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
-      vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
-      vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
-      outColor = combinedRefraction;
-    } else {
-      outColor = texture(u_bg, v_uv);
-    }
-  } else if (STEP <= 9) {
+    vec2 u_resolution1x = u_resolution.xy / u_dpr;
+    float merged = mainSDF(gl_FragCoord.xy);
+    vec4 outColor;
+    
     if (merged < 0.005) {
-      float nmerged = -1.0 * (merged * u_resolution1x.y);
-
-      // calculate refraction edge factor:
-      float x_R_ratio = 1.0 - nmerged / u_refThickness;
-      float thetaI = asin(pow(x_R_ratio, 2.0));
-      float thetaT = asin(1.0 / u_refFactor * sin(thetaI));
-      float edgeFactor = -1.0 * tan(thetaT - thetaI);
-      // Will have value > 0 inside of shape, force normalize here
-      if (nmerged >= u_refThickness) {
-        edgeFactor = 0.0;
-      }
-
-      // UNIFIED COLOR PROCESSING: Both interior and edge areas use identical logic
-      // Only difference is the refraction offset calculation
-      
-      vec2 refractionOffset;
-      if (edgeFactor <= 0.0) {
-        // Interior: no positional offset (straight-through view)
-        refractionOffset = vec2(0.0);
-      } else {
-        // Edge: calculate refraction offset based on surface normal and edge factor
-        vec2 normal = getNormal(gl_FragCoord.xy);
-        refractionOffset = -normal *
-          edgeFactor *
-          0.05 *
-          u_dpr *
-          vec2(
-            u_resolution.y / (u_resolution1x.x * u_dpr), /* resolution independent */
-            1.0
-          );
-      }
-      
-      // IDENTICAL COLOR PROCESSING for both interior and edge areas
-      // Apply chromatic dispersion with calculated offset
-      vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
-      vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
-      
-      // Apply same blending logic everywhere
-      vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
-      
-      // Calculate combined alpha from tint and effects
-      float combinedAlpha = u_tint.a;
-
-      float fresnelFactor = clamp(
-        pow(
-          1.0 +
-            merged * u_resolution1x.y / 1500.0 * pow(500.0 / u_refFresnelRange, 2.0) +
-            u_refFresnelHardness,
-          5.0
-        ),
-        0.0,
-        1.0
-      );
-      
-      // Add fresnel contribution to alpha
-      float fresnelAlpha = fresnelFactor * u_refFresnelFactor * 0.3;
-      combinedAlpha = clamp(combinedAlpha + fresnelAlpha, 0.0, 1.0);
-      
-      // Apply alpha testing with advanced dithering
-      float ditherThreshold = getAdvancedDitherThreshold(
-          gl_FragCoord.xy, 
-          combinedAlpha, 
-          u_time
-      );
-      
-      // Smooth alpha testing to reduce hard edges
-      float alphaTest = combinedAlpha - ditherThreshold;
-      alphaTest = mix(alphaTest, smoothstep(0.0, 0.1, alphaTest), u_ditherStrength);
-      
-      if (alphaTest < 0.0) {
-          discard;
-      }
-      
-      // Apply liquid glass effects to surviving fragments
-      outColor = mix(combinedRefraction, vec4(u_tint.r, u_tint.g, u_tint.b, 1.0), u_tint.a * 0.8);
-
-      vec3 fresnelTintLCH = SRGB_TO_LCH(
-        mix(vec3(1.0), vec3(u_tint.r, u_tint.g, u_tint.b), u_tint.a * 0.5)
-      );
-      fresnelTintLCH.x += 20.0 * fresnelFactor * u_refFresnelFactor;
-      fresnelTintLCH.x = clamp(fresnelTintLCH.x, 0.0, 100.0);
-
-      outColor = mix(
-        outColor,
-        vec4(LCH_TO_SRGB(fresnelTintLCH), 1.0),
-        fresnelFactor * u_refFresnelFactor * 0.7
-      );
-
-      // Add glare effect (applied consistently to both interior and edge areas)
-      float glareGeoFactor = clamp(
-        pow(
-          1.0 +
-            merged * u_resolution1x.y / 1500.0 * pow(500.0 / u_glareRange, 2.0) +
-            u_glareHardness,
-          5.0
-        ),
-        0.0,
-        1.0
-      );
-
-      // Calculate normal for glare angle (used for both interior and edge areas)
-      vec2 glareNormal = getNormal(gl_FragCoord.xy);
-      float glareAngle = (vec2ToAngle(normalize(glareNormal)) - PI / 4.0 + u_glareAngle) * 2.0;
-      int glareFarside = 0;
-      if (
-        glareAngle > PI * (2.0 - 0.5) && glareAngle < PI * (4.0 - 0.5) ||
-        glareAngle < PI * (0.0 - 0.5)
-      ) {
-        glareFarside = 1;
-      }
-      
-      float glareAngleFactor =
-        (0.5 + sin(glareAngle) * 0.5) *
-        (glareFarside == 1
-          ? 1.2 * u_glareOppositeFactor
-          : 1.2) *
-        u_glareFactor;
-      glareAngleFactor = clamp(pow(glareAngleFactor, 0.1 + u_glareConvergence * 2.0), 0.0, 1.0);
-
-      vec3 glareTintLCH = SRGB_TO_LCH(
-        mix(combinedRefraction.rgb, vec3(u_tint.r, u_tint.g, u_tint.b), u_tint.a * 0.5)
-      );
-      glareTintLCH.x += 150.0 * glareAngleFactor * glareGeoFactor;
-      glareTintLCH.y += 30.0 * glareAngleFactor * glareGeoFactor;
-      glareTintLCH.x = clamp(glareTintLCH.x, 0.0, 120.0);
-
-      outColor = mix(
-        outColor,
-        vec4(LCH_TO_SRGB(glareTintLCH), 1.0),
-        glareAngleFactor * glareGeoFactor
-      );
+        // Calculate all effect factors first
+        float nmerged = -1.0 * (merged * u_resolution1x.y);
+        float x_R_ratio = 1.0 - nmerged / u_refThickness;
+        float thetaI = asin(pow(x_R_ratio, 2.0));
+        float thetaT = asin(1.0 / u_refFactor * sin(thetaI));
+        float edgeFactor = -1.0 * tan(thetaT - thetaI);
+        
+        if (nmerged >= u_refThickness) {
+            edgeFactor = 0.0;
+        }
+        
+        // Calculate refraction offset
+        vec2 refractionOffset = vec2(0.0);
+        if (edgeFactor > 0.0) {
+            vec2 normal = getNormal(gl_FragCoord.xy);
+            refractionOffset = -normal * edgeFactor * 0.05 * u_dpr *
+                vec2(u_resolution.y / (u_resolution1x.x * u_dpr), 1.0);
+        }
+        
+        // *** SELECTIVE TRANSPARENCY STRATEGY ***
+        
+        // 1. Calculate base refraction (expensive - candidate for alpha testing)
+        vec4 blurredPixel = getTextureDispersion(u_bg, refractionOffset, u_refDispersion);
+        vec4 previousLayerPixel = getTextureDispersion(u_previousLayer, refractionOffset, u_refDispersion);
+        vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
+        
+        // 2. Calculate effect complexity score
+        float effectComplexity = 0.0;
+        effectComplexity += length(refractionOffset) > 0.001 ? 0.4 : 0.0; // Refraction complexity
+        effectComplexity += u_refDispersion > 0.01 ? 0.3 : 0.0; // Dispersion complexity
+        
+        // 3. Calculate fresnel effects
+        float fresnelFactor = clamp(
+            pow(
+                1.0 + merged * u_resolution1x.y / 1500.0 * pow(500.0 / u_refFresnelRange, 2.0) + u_refFresnelHardness,
+                5.0
+            ),
+            0.0, 1.0
+        );
+        effectComplexity += fresnelFactor > 0.1 ? 0.2 : 0.0; // Fresnel complexity
+        
+        // 4. Calculate glare effects
+        float glareGeoFactor = clamp(
+            pow(
+                1.0 + merged * u_resolution1x.y / 1500.0 * pow(500.0 / u_glareRange, 2.0) + u_glareHardness,
+                5.0
+            ),
+            0.0, 1.0
+        );
+        effectComplexity += glareGeoFactor > 0.1 ? 0.1 : 0.0; // Glare complexity
+        
+        // *** HYBRID TRANSPARENCY DECISION WITH DISTANCE-BASED DITHERING ***
+        
+        if (u_enableSelectiveAlpha > 0.5 && effectComplexity > u_effectComplexityThreshold) {
+            // HIGH COMPLEXITY PATH: Use alpha testing for expensive effects
+            
+            float combinedAlpha = u_tint.a + fresnelFactor * u_refFresnelFactor * 0.3;
+            combinedAlpha = clamp(combinedAlpha, 0.0, 1.0);
+            
+            // DISTANCE-BASED DITHERING: Only dither near edges where SDF value is small
+            float distanceToEdge = abs(merged);
+            float edgeThreshold = 0.002; // Pixels close to shape edge
+            
+            if (distanceToEdge < edgeThreshold) {
+                // Near edge: use dithering for complex effects
+                float ditherThreshold = getSelectiveDitherThreshold(
+                    gl_FragCoord.xy, combinedAlpha, u_time, 2 // Use blue noise quality
+                );
+                
+                float alphaTest = combinedAlpha - ditherThreshold;
+                if (alphaTest < 0.0) {
+                    discard;
+                }
+            } else {
+                // Interior area: use smooth alpha test without dithering
+                if (combinedAlpha < 0.1) {
+                    discard; // Only discard very transparent pixels
+                }
+            }
+            
+            // Apply all effects to surviving fragments
+            outColor = mix(combinedRefraction, vec4(u_tint.r, u_tint.g, u_tint.b, 1.0), u_tint.a * 0.8);
+            
+        } else {
+            // LOW COMPLEXITY PATH: Use traditional blending for smooth tinting
+            
+            // Apply tint with smooth traditional blending
+            outColor = mix(combinedRefraction, vec4(u_tint.r, u_tint.g, u_tint.b, 1.0), u_tint.a * 0.8);
+            
+            // For simple tinting areas, use minimal or no dithering
+            float tintOnlyAlpha = u_tint.a;
+            
+            // Only apply dithering if alpha is very low AND we're near edges
+            float distanceToEdge = abs(merged);
+            float edgeThreshold = 0.001;
+            
+            if (tintOnlyAlpha < 0.3 && distanceToEdge < edgeThreshold && u_enableSelectiveAlpha > 0.5) {
+                float ditherThreshold = getSelectiveDitherThreshold(
+                    gl_FragCoord.xy, tintOnlyAlpha, u_time, 1 // Minimal dither quality
+                );
+                
+                float alphaTest = tintOnlyAlpha - ditherThreshold;
+                if (alphaTest < 0.0) {
+                    discard;
+                }
+            } else if (tintOnlyAlpha < 0.05) {
+                // Very transparent pixels: simple discard without noise
+                discard;
+            }
+        }
+        
+        // Apply fresnel effects (to both paths for consistency)
+        vec3 fresnelTintLCH = SRGB_TO_LCH(
+            mix(vec3(1.0), vec3(u_tint.r, u_tint.g, u_tint.b), u_tint.a * 0.5)
+        );
+        fresnelTintLCH.x += 20.0 * fresnelFactor * u_refFresnelFactor;
+        fresnelTintLCH.x = clamp(fresnelTintLCH.x, 0.0, 100.0);
+        outColor = mix(
+            outColor,
+            vec4(LCH_TO_SRGB(fresnelTintLCH), 1.0),
+            fresnelFactor * u_refFresnelFactor * 0.7
+        );
+        
+        // Apply glare effects (to both paths for consistency)
+        vec2 glareNormal = getNormal(gl_FragCoord.xy);
+        float glareAngle = (vec2ToAngle(normalize(glareNormal)) - PI / 4.0 + u_glareAngle) * 2.0;
+        int glareFarside = 0;
+        if (
+            glareAngle > PI * (2.0 - 0.5) && glareAngle < PI * (4.0 - 0.5) ||
+            glareAngle < PI * (0.0 - 0.5)
+        ) {
+            glareFarside = 1;
+        }
+        
+        float glareAngleFactor = (0.5 + sin(glareAngle) * 0.5) *
+            (glareFarside == 1 ? 1.2 * u_glareOppositeFactor : 1.2) * u_glareFactor;
+        glareAngleFactor = clamp(pow(glareAngleFactor, 0.1 + u_glareConvergence * 2.0), 0.0, 1.0);
+        
+        vec3 glareTintLCH = SRGB_TO_LCH(
+            mix(outColor.rgb, vec3(u_tint.r, u_tint.g, u_tint.b), u_tint.a * 0.5)
+        );
+        glareTintLCH.x += 150.0 * glareAngleFactor * glareGeoFactor;
+        glareTintLCH.y += 30.0 * glareAngleFactor * glareGeoFactor;
+        glareTintLCH.x = clamp(glareTintLCH.x, 0.0, 120.0);
+        outColor = mix(
+            outColor,
+            vec4(LCH_TO_SRGB(glareTintLCH), 1.0),
+            glareAngleFactor * glareGeoFactor
+        );
+        
     } else {
-      outColor = texture(u_previousLayer, v_uv);
+        outColor = texture(u_previousLayer, v_uv);
     }
-
-    // smooth transition only at shape edges - REMOVED for dithering
-    // outColor = mix(outColor, texture(u_previousLayer, v_uv), smoothstep(-0.0005, 0.0005, merged));
-
-  }
-
-  fragColor = vec4(outColor.rgb, 1.0); // Always output opaque pixels
+    
+    fragColor = vec4(outColor.rgb, 1.0); // Always output opaque pixels
 }
 
 

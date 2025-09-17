@@ -152,6 +152,15 @@ function App() {
     blueNoiseTexture: WebGLTexture | null;
     frameCount: number;
     startTime: number;
+    performanceMode: 'high' | 'medium' | 'low' | 'auto';
+    frameTimeHistory: number[];
+    adaptiveQuality: {
+      enableSelectiveAlpha: boolean;
+      tintAlphaThreshold: number;
+      effectComplexityThreshold: number;
+      ditherStrength: number;
+      ditherType: number;
+    }
   }>({
     renderRaf: null,
     glStates: null,
@@ -187,6 +196,15 @@ function App() {
     blueNoiseTexture: null,
     frameCount: 0,
     startTime: performance.now(),
+    performanceMode: 'auto',
+    frameTimeHistory: [],
+    adaptiveQuality: {
+      enableSelectiveAlpha: true,
+      tintAlphaThreshold: 0.95, // Higher threshold for smoother interiors
+      effectComplexityThreshold: 0.4, // Less aggressive alpha testing
+      ditherStrength: 0.3, // Lower default dither strength
+      ditherType: 2, // Default to blue noise for better quality
+    }
   });
   stateRef.current.canvasInfo = canvasInfo;
   stateRef.current.controls = controls;
@@ -199,6 +217,29 @@ function App() {
     zIndex: def.zIndex,
   }));
   stateRef.current.shapeManager = new ShapeManager(initialShapes);
+
+  // Performance adaptation function - optimized for reduced noise
+  const adaptQualitySettings = (frameTime: number, qualityControls: typeof stateRef.current.adaptiveQuality) => {
+      const fps = 1000 / frameTime;
+      const targetFPS = 60;
+      
+      if (fps < targetFPS * 0.7) {
+          // Low performance - prioritize speed with minimal noise
+          qualityControls.enableSelectiveAlpha = true;
+          qualityControls.tintAlphaThreshold = 0.98; // More areas get smooth blending
+          qualityControls.effectComplexityThreshold = 0.15; // More aggressive alpha testing
+          qualityControls.ditherStrength = 0.2; // Very low dither noise
+          qualityControls.ditherType = 1; // Use minimal Bayer dithering
+      } else if (fps > targetFPS * 0.9) {
+          // Good performance - prioritize quality with blue noise
+          qualityControls.enableSelectiveAlpha = true;
+          qualityControls.tintAlphaThreshold = 0.85; // Balanced selective rendering
+          qualityControls.effectComplexityThreshold = 0.5; // Less aggressive alpha testing
+          qualityControls.ditherStrength = 0.4; // Moderate quality dithering
+          qualityControls.ditherType = 2; // Use blue noise dithering
+      }
+      // Medium performance range - use default values from initialization
+  };
 
   // useEffect(() => {
   //   setLangName(controls.language[0] as keyof typeof languages);
@@ -533,6 +574,7 @@ function App() {
     };
     // let startTime: number | null = null
     const render = () => {
+      const frameStart = performance.now();
       raf = requestAnimationFrame(render);
       stateRef.current.frameCount++;
       
@@ -728,9 +770,13 @@ function App() {
           // Dithering uniforms
           u_time: currentTime,
           u_frameCount: stateRef.current.frameCount,
-          u_ditherStrength: controls.ditherStrength,
-          u_ditherType: controls.ditherType,
+          u_ditherStrength: stateRef.current.adaptiveQuality.ditherStrength,
+          u_ditherType: stateRef.current.adaptiveQuality.ditherType,
           u_blueNoiseTex: stateRef.current.blueNoiseTexture,
+          // Selective alpha uniforms
+          u_enableSelectiveAlpha: stateRef.current.adaptiveQuality.enableSelectiveAlpha ? 1.0 : 0.0,
+          u_tintAlphaThreshold: stateRef.current.adaptiveQuality.tintAlphaThreshold,
+          u_effectComplexityThreshold: stateRef.current.adaptiveQuality.effectComplexityThreshold,
         });
 
         // Build pass-specific uniforms
@@ -951,6 +997,20 @@ function App() {
         // } // This line is no longer needed
 
         renderer.render(passUniforms);
+      }
+
+      // Performance monitoring and adaptation
+      const frameTime = performance.now() - frameStart;
+      stateRef.current.frameTimeHistory.push(frameTime);
+      
+      if (stateRef.current.frameTimeHistory.length > 60) {
+          stateRef.current.frameTimeHistory.shift();
+          
+          const avgFrameTime = stateRef.current.frameTimeHistory.reduce((a, b) => a + b, 0) / 60;
+          
+          if (stateRef.current.performanceMode === 'auto') {
+              adaptQualitySettings(avgFrameTime, stateRef.current.adaptiveQuality);
+          }
       }
     };
     raf = requestAnimationFrame(render);

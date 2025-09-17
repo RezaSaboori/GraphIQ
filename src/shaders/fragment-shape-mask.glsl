@@ -70,7 +70,7 @@ float mainSDF(vec2 p) {
     // Convert shape position from screen to normalized coordinates
     vec2 shapePos = (u_shapePositions[i] - u_resolution.xy * 0.5) / u_resolution.y;
     vec2 shapeSize = u_shapeSizes[i] / u_resolution.y;
-    float shapeRadius = (u_shapeRadii[i] / 100.0) * min(shapeSize.x, shapeSize.y) * 0.5;
+    float shapeRadius = (u_shapeRadii[i] / 100.0) * 0.1; // Fixed radius reference independent of shape size
     float shapeRoundness = u_shapeRoundnesses[i];
     
     vec2 pn = shapePos + p / u_resolution.y;
