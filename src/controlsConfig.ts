@@ -39,6 +39,11 @@ interface ShapeSettings {
   shapeWidth: ControlRange;
   shapeRadius: ControlRange;
   shapeRoundness: ControlRange;
+  shapeSqueeze: ControlRange;
+  shapeCount: ControlRange;
+  shapeSpacing: ControlRange;
+  shapeDistribution: { value: 'grid' | 'random'; options: ['grid', 'random'] };
+  shapeAlpha: ControlRange;
 }
 
 interface DebugSettings {
@@ -50,7 +55,7 @@ interface CanvasSettings {
   height: ControlRange;
 }
 
-interface ControlsConfig {
+interface Controls {
   refThickness: ControlRange;
   refFactor: ControlRange;
   refDispersion: ControlRange;
@@ -73,6 +78,12 @@ interface ControlsConfig {
   shapeSettings: ShapeSettings;
   debugSettings: DebugSettings;
   canvasSettings: CanvasSettings;
+
+  // Dithering and performance controls from the guide
+  ditherStrength: ControlRange;
+  ditherType: { value: number; options: { [key: string]: number } };
+  maxShapesPerPass: ControlRange;
+  enableDepthPrepass: { value: boolean };
 }
 
 // Removed per-shape tint controls from global config. Per-shape tints are defined per shape in App.tsx.
@@ -90,23 +101,33 @@ interface DefaultControls {
   glareConvergence: number;
   glareOppositeFactor: number;
   glareAngle: number;
-  
+  step: number;
+  shapeWidth: number;
+  shapeHeight: number;
+  shapeRadius: number;
+  shapeRoundness: number;
+  shapeSqueeze: number;
+  shapeCount: number;
+  shapeSpacing: number;
+  shapeDistribution: 'grid' | 'random';
+  maxShapesPerPass: number;
+  enableDepthPrepass: boolean;
+  ditherStrength: number;
+  ditherType: number;
+  shapeAlpha: number;
+  // Additional properties used in App.tsx
   mergeRatio: number;
   tint: ColorValue;
   shadowExpand: number;
   shadowFactor: number;
   shadowPosition: { x: number; y: number };
   bgType: number;
-  shapeWidth: number;
-  shapeRadius: number;
-  shapeRoundness: number;
-  step: number;
   canvasWidth: number;
   canvasHeight: number;
 }
 
 // Control configuration values
-export const controlsConfig: ControlsConfig = {
+export const controlsConfig: Controls = {
   refThickness: {
     min: 1,
     max: 80,
@@ -229,6 +250,11 @@ export const controlsConfig: ControlsConfig = {
       step: 0.01,
       value: 5,
     },
+    shapeSqueeze: { value: 0.5, min: 0, max: 2, step: 0.01 },
+    shapeCount: { value: 100, min: 1, max: 2000, step: 1 },
+    shapeSpacing: { value: 10, min: 0, max: 100, step: 1 },
+    shapeDistribution: { value: 'grid', options: ['grid', 'random'] },
+    shapeAlpha: { value: 0.5, min: 0, max: 1, step: 0.01 },
   },
   debugSettings: {
     step: {
@@ -252,6 +278,22 @@ export const controlsConfig: ControlsConfig = {
       value: window.innerHeight,
     },
   },
+  
+  // Dithering controls
+  ditherStrength: { value: 0.8, min: 0.0, max: 1.0, step: 0.01 },
+  ditherType: { 
+    value: 2, 
+    options: { 
+      'Bayer Matrix': 0, 
+      'Hash Function': 1, 
+      'Blue Noise': 2, 
+      'Spatiotemporal': 3 
+    } 
+  },
+  
+  // Performance optimization
+  maxShapesPerPass: { value: 50, min: 20, max: 200, step: 10 },
+  enableDepthPrepass: { value: false },
 };
 
 // Default control values (flattened for easy access)
@@ -281,4 +323,15 @@ export const defaultControls: DefaultControls = {
   step: 9,
   canvasWidth: window.innerWidth,
   canvasHeight: window.innerHeight,
+  ditherStrength: 0.8,
+  ditherType: 2,
+  maxShapesPerPass: 50,
+  enableDepthPrepass: false,
+  shapeAlpha: 0.5,
+  // Additional included values for completeness
+  shapeHeight: 200,
+  shapeSqueeze: 0.5,
+  shapeCount: 100,
+  shapeSpacing: 10,
+  shapeDistribution: 'grid',
 };

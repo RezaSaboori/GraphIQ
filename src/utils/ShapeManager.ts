@@ -7,7 +7,7 @@ export interface Shape {
   visible: boolean;
   draggable: boolean;
   zIndex: number;
-  color?: { r: number; g: number; b: number; a: number };
+  tint: { r: number; g: number; b: number; a: number };
 }
 
 export interface ShapeManagerState {
@@ -47,7 +47,7 @@ export class ShapeManager {
       visible: shapeData.visible !== false,
       draggable: shapeData.draggable !== false,
       zIndex: shapeData.zIndex !== undefined ? shapeData.zIndex : 0,
-      color: shapeData.color || { r: 255, g: 255, b: 255, a: 1 },
+      tint: shapeData.tint || { r: 255, g: 255, b: 255, a: 1 },
     };
     
     this.state.shapes.set(id, shape);
@@ -76,7 +76,7 @@ export class ShapeManager {
   getVisibleShapes(): Shape[] {
     return this.getAllShapes()
       .filter(shape => shape.visible)
-      .sort((a, b) => a.zIndex - b.zIndex); // Sort by zIndex (lower values render first/behind)
+      // .sort((a, b) => a.zIndex - b.zIndex); // No longer needed for OIT
   }
 
   updateShape(id: string, updates: Partial<Shape>): boolean {
@@ -147,6 +147,73 @@ export class ShapeManager {
     return this.state.draggingShapeId;
   }
 
+  // New method from guide
+  private getShapeDefinition(shapeId: string) {
+      // This should reference your shape definitions from App.tsx
+      // You'll need to pass this data to ShapeManager
+      // For now, returning a default tint
+      const shape = this.getShape(shapeId);
+      return shape ? { tint: shape.tint } : null;
+  }
+
+  // New method for batched shape data with alpha testing optimization
+  public getBatchedShapeData(maxShapesPerBatch: number = 50): {
+      batches: Array<{
+          shapes: Shape[];
+          zIndex: number;
+          avgAlpha: number;
+          tint: { r: number; g: number; b: number; a: number };
+      }>;
+  } {
+      const visibleShapes = this.getVisibleShapes();
+      // Use a Map with a compound key to group by zIndex and tint
+      const groups = new Map<string, Shape[]>();
+
+      visibleShapes.forEach(shape => {
+          // Use a consistent key for the tint object
+          const tintKey = JSON.stringify(shape.tint);
+          const key = `${shape.zIndex}-${tintKey}`;
+          if (!groups.has(key)) {
+              groups.set(key, []);
+          }
+          groups.get(key)!.push(shape);
+      });
+      
+      const result: Array<{shapes: Shape[]; zIndex: number; avgAlpha: number; tint: { r: number; g: number; b: number; a: number }}> = [];
+      
+      // Split large groups into multiple batches
+      for (const shapes of groups.values()) {
+          if (shapes.length === 0) continue;
+          
+          // All shapes in this group have the same zIndex and tint
+          const zIndex = shapes[0].zIndex;
+          const tint = shapes[0].tint;
+          const avgAlpha = tint.a; // Since all tints are the same, avg is just the value
+          
+          // Split into batches of maxShapesPerBatch
+          for (let i = 0; i < shapes.length; i += maxShapesPerBatch) {
+              const batchShapes = shapes.slice(i, i + maxShapesPerBatch);
+              result.push({ shapes: batchShapes, zIndex, avgAlpha, tint });
+          }
+      }
+      
+      // Sort final batches by z-index (back to front)
+      result.sort((a, b) => a.zIndex - b.zIndex);
+      
+      return { batches: result };
+  }
+
+  // New method to set shape definitions
+  public setShapeDefinitions(definitions: Array<{ id: string; tint: { r: number; g: number; b: number; a: number } }>) {
+      const defsById = new Map(definitions.map(d => [d.id, d]));
+      for (const shape of this.state.shapes.values()) {
+          const def = defsById.get(shape.id);
+          if (def) {
+              shape.tint = def.tint;
+          }
+      }
+  }
+
   // Get shape at a specific screen position (for click detection)
   public getShapeAtPosition(
     mousePos: { x: number; y: number },
@@ -200,7 +267,7 @@ export class ShapeManager {
     isHoverShape: number[]; // Track which shapes are hover shapes (1.0 for hover, 0.0 for regular)
     count: number;
   } {
-    const shapes = this.getVisibleShapes();
+    const shapes = this.getAllShapes().filter(s => s.visible); // Use unsorted but visible shapes
     const maxShapes = 20; // Maximum shapes supported by shader
     
     const positions: number[] = [];
@@ -252,6 +319,61 @@ export class ShapeManager {
       shapes: Array.from(this.state.shapes.entries()),
       nextId: this.nextId,
     });
+  }
+
+  getShapeDataForTexture(): {
+    data: Float32Array;
+    width: number;
+    height: number;
+    count: number;
+  } {
+    const shapes = this.getAllShapes().filter(s => s.visible);
+    const shapeCount = shapes.length;
+    if (shapeCount === 0) {
+      return { data: new Float32Array(), width: 0, height: 0, count: 0 };
+    }
+
+    // Use 3 pixels (RGBA = 4 floats) per shape
+    // Pixel 1: (pos.x, pos.y, size.x, size.y)
+    // Pixel 2: (radius, roundness, zIndex, isHoverShape)
+    // Pixel 3: (tint.r, tint.g, tint.b, tint.a)
+    const floatsPerShape = 12;
+    const data = new Float32Array(shapeCount * floatsPerShape);
+
+    for (let i = 0; i < shapeCount; i++) {
+      const shape = shapes[i];
+      const offset = i * floatsPerShape;
+
+      // Pixel 1
+      data[offset + 0] = shape.position.x;
+      data[offset + 1] = shape.position.y;
+      data[offset + 2] = shape.size.width;
+      data[offset + 3] = shape.size.height;
+
+      // Pixel 2
+      data[offset + 4] = shape.radius;
+      data[offset + 5] = shape.roundness;
+      data[offset + 6] = shape.zIndex;
+      data[offset + 7] = shape.id === 'hover_shape' ? 1.0 : 0.0;
+
+      // Pixel 3
+      data[offset + 8] = shape.tint.r / 255;
+      data[offset + 9] = shape.tint.g / 255;
+      data[offset + 10] = shape.tint.b / 255;
+      data[offset + 11] = shape.tint.a;
+    }
+
+    // For simplicity, using a 1D texture layout for now.
+    // A 2D layout would be more robust for very large numbers of shapes.
+    const textureWidth = shapeCount * 3;
+    const textureHeight = 1;
+
+    return {
+      data,
+      width: textureWidth,
+      height: textureHeight,
+      count: shapeCount,
+    };
   }
 
   deserialize(data: string): void {

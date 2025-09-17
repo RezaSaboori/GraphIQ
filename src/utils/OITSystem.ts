@@ -1,198 +1,156 @@
-import { ComputeShader } from './GLUtils';
-import type { LiquidShape } from '../elements/LiquidShape';
-
-import gatherShaderSource from '../shaders/oit-gather.glsl?raw';
-import sortShaderSource from '../shaders/oit-sort.glsl?raw';
-import compositeShaderSource from '../shaders/oit-composite.glsl?raw';
+import { createTexture, RenderPass } from './GLUtils';
+import WBOITGatherVertex from '../shaders/vertex.glsl?raw';
+import WBOITGatherFragment from '../shaders/wboit-gather.glsl?raw';
+import PassthroughVertex from '../shaders/vertex.glsl?raw'; // Simple quad vertex shader
+import WBOITCompositeFragment from '../shaders/wboit-composite.glsl?raw';
+import { ShapeManager } from './ShapeManager';
 
 export class OITSystem {
-  private gl: WebGL2RenderingContext;
-  private gatherShader: ComputeShader;
-  private sortShader: ComputeShader;
-  private compositeShader: ComputeShader;
+  private gl: WebGLRenderingContext | WebGL2RenderingContext;
+  private drawBuffersExt: WEBGL_draw_buffers | null = null;
+
+  // WBOIT Framebuffers and Textures
+  private oitFBO: WebGLFramebuffer | null = null;
+  private accumTexture: WebGLTexture | null = null;
+  private revealageTexture: WebGLTexture | null = null;
+
+  // Render Passes
+  private gatherPass: RenderPass | null = null;
+  private compositePass: RenderPass | null = null;
   
-  // A-Buffer storage
-  private fragmentListSSBO: WebGLBuffer;
-  private headPointerTexture: WebGLTexture;
-  private atomicCounterBuffer: WebGLBuffer;
-  
-  // Configuration
-  private maxFragmentsPerPixel = 16;
   private screenWidth: number;
   private screenHeight: number;
+  private shapeTexture: WebGLTexture | null = null;
+  private shapeTextureData: Float32Array | null = null;
+  private shapeTextureWidth = 0;
+  private shapeTextureHeight = 0;
 
-  constructor(gl: WebGL2RenderingContext, width: number, height: number) {
+  constructor(gl: WebGLRenderingContext | WebGL2RenderingContext, width: number, height: number) {
     this.gl = gl;
     this.screenWidth = width;
     this.screenHeight = height;
     
-    this.initializeBuffers();
-    this.createShaders();
+    this.init();
   }
 
-  private initializeBuffers(): void {
+  private init(): void {
     const gl = this.gl;
-    const pixelCount = this.screenWidth * this.screenHeight;
-    const maxFragments = pixelCount * this.maxFragmentsPerPixel;
 
-    // Fragment list SSBO - stores color, depth, next pointer for each fragment
-    this.fragmentListSSBO = gl.createBuffer()!;
-    gl.bindBuffer(gl.SHADER_STORAGE_BUFFER, this.fragmentListSSBO);
-    // Each fragment: vec4 color + float depth + uint next = 24 bytes, but let's use 32 for alignment
-    gl.bufferData(gl.SHADER_STORAGE_BUFFER, maxFragments * 32, gl.DYNAMIC_DRAW);
+    // 1. Get extensions
+    this.drawBuffersExt = gl.getExtension('WEBGL_draw_buffers');
+    if (!this.drawBuffersExt) {
+      console.error('WEBGL_draw_buffers is not supported');
+      return;
+    }
+    const halfFloatExt = gl.getExtension('OES_texture_half_float') || gl.getExtension('EXT_color_buffer_half_float');
+    if (!halfFloatExt) {
+      console.error('OES_texture_half_float or EXT_color_buffer_half_float is not supported');
+      return;
+    }
     
-    // Head pointer texture - stores first fragment index for each pixel
-    this.headPointerTexture = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, this.headPointerTexture);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.R32UI, this.screenWidth, this.screenHeight);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    // In WebGL1, we need this for linear filtering on float textures
+    gl.getExtension('OES_texture_half_float_linear');
 
-    // Atomic counter for fragment allocation
-    this.atomicCounterBuffer = gl.createBuffer()!;
-    gl.bindBuffer(gl.ATOMIC_COUNTER_BUFFER, this.atomicCounterBuffer);
-    gl.bufferData(gl.ATOMIC_COUNTER_BUFFER, 4, gl.DYNAMIC_DRAW);
-  }
+    // 2. Create Textures for WBOIT
+    const floatType = halfFloatExt.HALF_FLOAT_OES || (gl as any).HALF_FLOAT;
+    this.accumTexture = createTexture(gl, this.screenWidth, this.screenHeight, gl.RGBA, floatType);
+    this.revealageTexture = createTexture(gl, this.screenWidth, this.screenHeight, gl.RGBA, floatType); 
 
-  private createShaders(): void {
-    // Create the three compute shaders
-    this.gatherShader = new ComputeShader(this.gl, gatherShaderSource);
-    this.sortShader = new ComputeShader(this.gl, sortShaderSource);
-    this.compositeShader = new ComputeShader(this.gl, compositeShaderSource);
-  }
+    // 3. Create Framebuffer
+    this.oitFBO = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.oitFBO);
 
-  public render(shapes: LiquidShape[], globalUniforms: Record<string, any>): WebGLTexture {
-    this.clearBuffers();
-    this.gatherFragments(shapes, globalUniforms);
-    this.sortFragments();
-    return this.compositeFragments(globalUniforms);
-  }
+    // 4. Attach textures to FBO
+    const attachments = [
+      this.drawBuffersExt.COLOR_ATTACHMENT0_WEBGL,
+      this.drawBuffersExt.COLOR_ATTACHMENT1_WEBGL,
+    ];
+    this.drawBuffersExt.drawBuffersWEBGL(attachments);
 
-  private clearBuffers(): void {
-    const gl = this.gl;
-    
-    // Reset atomic counter
-    gl.bindBuffer(gl.ATOMIC_COUNTER_BUFFER, this.atomicCounterBuffer);
-    const zero = new Uint32Array([0]);
-    gl.bufferSubData(gl.ATOMIC_COUNTER_BUFFER, 0, zero);
-    gl.bindBuffer(gl.ATOMIC_COUNTER_BUFFER, null);
-    
-    // Clear head pointers to 0xFFFFFFFF
-    const clearValue = new Uint32Array(this.screenWidth * this.screenHeight);
-    clearValue.fill(0xFFFFFFFF);
-    gl.bindTexture(gl.TEXTURE_2D, this.headPointerTexture);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.screenWidth, this.screenHeight, gl.RED_INTEGER, gl.UNSIGNED_INT, clearValue);
-    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, attachments[0], gl.TEXTURE_2D, this.accumTexture, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, attachments[1], gl.TEXTURE_2D, this.revealageTexture, 0);
+
+    // 5. Check FBO status
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      console.error('FBO incomplete: ' + status.toString());
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // 6. Create Shader Programs / Render Passes
+    this.gatherPass = new RenderPass(gl, { vertex: WBOITGatherVertex, fragment: WBOITGatherFragment });
+    this.compositePass = new RenderPass(gl, { vertex: PassthroughVertex, fragment: WBOITCompositeFragment }, true);
   }
   
+  public render(shapeManager: ShapeManager, bgTexture: WebGLTexture, globalUniforms: Record<string, any>): void {
+    const gl = this.gl;
+    if (!this.drawBuffersExt || !this.oitFBO || !this.gatherPass || !this.compositePass) return;
+
+    // --- 1. GATHER PASS ---
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.oitFBO);
+    gl.viewport(0, 0, this.screenWidth, this.screenHeight);
+
+    // Clear buffers
+    this.drawBuffersExt.drawBuffersWEBGL([
+      this.drawBuffersExt.COLOR_ATTACHMENT0_WEBGL,
+      this.drawBuffersExt.COLOR_ATTACHMENT1_WEBGL,
+    ]);
+    gl.clearBufferfv(gl.COLOR, 0, [0.0, 0.0, 0.0, 0.0]); // Accumulation buffer
+    gl.clearBufferfv(gl.COLOR, 1, [1.0, 1.0, 1.0, 1.0]); // Revealage buffer
+
+    // Set blending for WBOIT
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
+    
+    // Disable depth test for this pass, z-ordering is handled by blending
+    gl.disable(gl.DEPTH_TEST);
+
+    const shapeData = shapeManager.getShapeDataForTexture();
+    if (shapeData.count === 0) return;
+
+    // Update shape data texture
+    if (!this.shapeTexture || this.shapeTextureWidth !== shapeData.width || this.shapeTextureHeight !== shapeData.height) {
+        if (this.shapeTexture) gl.deleteTexture(this.shapeTexture);
+        this.shapeTexture = createTexture(gl, shapeData.width, shapeData.height, gl.RGBA, (gl as any).FLOAT, shapeData.data);
+        this.shapeTextureWidth = shapeData.width;
+        this.shapeTextureHeight = shapeData.height;
+    } else {
+        gl.bindTexture(gl.TEXTURE_2D, this.shapeTexture);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, shapeData.width, shapeData.height, gl.RGBA, (gl as any).FLOAT, shapeData.data);
+    }
+    
+    const uniforms = {
+        ...globalUniforms,
+        u_shapeTexture: this.shapeTexture,
+        u_shapeTextureSize: [this.shapeTextureWidth, this.shapeTextureHeight],
+        u_shapeCount: shapeData.count,
+        u_bg: bgTexture
+    };
+    this.gatherPass.render(uniforms);
+
+    // --- 2. COMPOSITE PASS ---
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Render to screen
+    gl.viewport(0, 0, this.screenWidth, this.screenHeight);
+    
+    // Disable blending for composite pass, it's a direct write
+    gl.disable(gl.BLEND);
+    
+    this.compositePass.render({
+        u_accumTexture: this.accumTexture,
+        u_revealageTexture: this.revealageTexture,
+        u_bgTexture: bgTexture,
+    });
+  }
+
   public dispose(): void {
-    this.gatherShader.dispose();
-    this.sortShader.dispose();
-    this.compositeShader.dispose();
-
-    this.gl.deleteBuffer(this.fragmentListSSBO);
-    this.gl.deleteTexture(this.headPointerTexture);
-    this.gl.deleteBuffer(this.atomicCounterBuffer);
-  }
-
-  private prepareShapeData(shapes: LiquidShape[]) {
-    const positions: number[] = [];
-    const sizes: number[] = [];
-    const radii: number[] = [];
-    const roundnesses: number[] = [];
-    const visibilities: number[] = [];
-    const zIndices: number[] = [];
-    const tints: number[] = [];
-
-    for (const shape of shapes) {
-        positions.push(shape.position.x, shape.position.y);
-        sizes.push(shape.size.width, shape.size.height);
-        radii.push(shape.radius);
-        roundnesses.push(shape.roundness);
-        visibilities.push(shape.visible ? 1.0 : 0.0);
-        zIndices.push(shape.zIndex);
-        tints.push(shape.tint.r / 255, shape.tint.g / 255, shape.tint.b / 255, shape.tint.a);
-    }
-
-    return { positions, sizes, radii, roundnesses, visibilities, zIndices, tints };
-  }
-
-  private gatherFragments(shapes: LiquidShape[], _globalUniforms: Record<string, any>): void {
     const gl = this.gl;
+    if (this.oitFBO) gl.deleteFramebuffer(this.oitFBO);
+    if (this.accumTexture) gl.deleteTexture(this.accumTexture);
+    if (this.revealageTexture) gl.deleteTexture(this.revealageTexture);
     
-    this.gatherShader.use();
-    
-    // Bind buffers
-    gl.bindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, this.fragmentListSSBO);
-    gl.bindBufferBase(gl.ATOMIC_COUNTER_BUFFER, 0, this.atomicCounterBuffer);
-    gl.bindImageTexture(0, this.headPointerTexture, 0, false, 0, gl.READ_WRITE, gl.R32UI);
-    
-    // Set uniforms
-    this.gatherShader.setUniform('u_resolution', [this.screenWidth, this.screenHeight]);
-    this.gatherShader.setUniform('u_shapeCount', shapes.length);
-    
-    // Set shape data
-    const shapeData = this.prepareShapeData(shapes);
-    this.gatherShader.setUniform('u_shapePositions', shapeData.positions);
-    this.gatherShader.setUniform('u_shapeSizes', shapeData.sizes);
-    this.gatherShader.setUniform('u_shapeRadii', shapeData.radii);
-    this.gatherShader.setUniform('u_shapeRoundnesses', shapeData.roundnesses);
-    this.gatherShader.setUniform('u_shapeVisibilities', shapeData.visibilities);
-    this.gatherShader.setUniform('u_shapeZIndices', shapeData.zIndices);
-    this.gatherShader.setUniform('u_shapeTints', shapeData.tints);
-
-    // Dispatch - one thread per pixel
-    const workGroupsX = Math.ceil(this.screenWidth / 16);
-    const workGroupsY = Math.ceil(this.screenHeight / 16);
-    this.gatherShader.dispatch(workGroupsX, workGroupsY);
-  }
-
-  private sortFragments(): void {
-    const gl = this.gl;
-    
-    this.sortShader.use();
-    gl.bindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, this.fragmentListSSBO);
-    gl.bindImageTexture(0, this.headPointerTexture, 0, false, 0, gl.READ_WRITE, gl.R32UI);
-    
-    this.sortShader.setUniform('u_resolution', [this.screenWidth, this.screenHeight]);
-    this.sortShader.setUniform('u_maxFragments', this.maxFragmentsPerPixel);
-    
-    // Dispatch sorting - one thread per pixel
-    const workGroupsX = Math.ceil(this.screenWidth / 16);
-    const workGroupsY = Math.ceil(this.screenHeight / 16);
-    this.sortShader.dispatch(workGroupsX, workGroupsY);
-  }
-
-  private compositeFragments(globalUniforms: Record<string, any>): WebGLTexture {
-    const gl = this.gl;
-    
-    // Create output texture
-    const outputTexture = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, outputTexture);
-    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, this.screenWidth, this.screenHeight);
-    
-    this.compositeShader.use();
-    gl.bindBufferBase(gl.SHADER_STORAGE_BUFFER, 0, this.fragmentListSSBO);
-    gl.bindImageTexture(0, this.headPointerTexture, 0, false, 0, gl.READ_ONLY, gl.R32UI);
-    gl.bindImageTexture(1, outputTexture, 0, false, 0, gl.WRITE_ONLY, gl.RGBA16F);
-    
-    // Set liquid glass effect uniforms
-    this.compositeShader.setUniform('u_resolution', [this.screenWidth, this.screenHeight]);
-    this.compositeShader.setUniform('u_refFactor', globalUniforms.u_refFactor || 1.0);
-    this.compositeShader.setUniform('u_refDispersion', globalUniforms.u_refDispersion || 0.0);
-    
-    // Other uniforms for composite shader like background textures
-    // Removed blurred background binding; compositor samples u_bg or other inputs directly
-    if (globalUniforms.u_bg) {
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, globalUniforms.u_bg);
-        this.compositeShader.setUniform('u_bg', 1);
-    }
-    
-    const workGroupsX = Math.ceil(this.screenWidth / 16);
-    const workGroupsY = Math.ceil(this.screenHeight / 16);
-    this.compositeShader.dispatch(workGroupsX, workGroupsY);
-    
-    return outputTexture;
+    this.gatherPass?.dispose();
+    this.compositePass?.dispose();
+    if (this.shapeTexture) gl.deleteTexture(this.shapeTexture);
   }
 }

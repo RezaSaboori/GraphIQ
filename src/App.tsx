@@ -14,6 +14,7 @@ import {
   MultiPassRenderer,
   updateVideoTexture,
   RenderPass,
+  createBlueNoiseTexture,
 } from './utils/GLUtils';
 import { OITSystem } from './utils/OITSystem';
 import PassthroughFragmentShader from './shaders/fragment-passthrough.glsl?raw';
@@ -34,79 +35,7 @@ type ColorValue = {
   a: number;
 };
 
-// Helper function to build layered render passes for shapes
-function buildLayeredRenderPasses(shapes: Shape[]): any[] {
-  // Sort shapes by zIndex (lowest to highest - back to front)
-  const sortedShapes = [...shapes].sort((a, b) => a.zIndex - b.zIndex);
-  
-  const passes: any[] = [
-    // Background pass
-    {
-      name: 'bgPass',
-      shader: {
-        vertex: VertexShader,
-        fragment: FragmentBgShader,
-      },
-    },
-  ];
-
-  // No blur passes; keep only background and shape layers
-  
-  // Group shapes by z-index for blob merging within same z-index, layered rendering between z-indices
-  const zIndexGroups = new Map<number, Shape[]>();
-  sortedShapes.forEach(shape => {
-    if (!zIndexGroups.has(shape.zIndex)) {
-      zIndexGroups.set(shape.zIndex, []);
-    }
-    zIndexGroups.get(shape.zIndex)!.push(shape);
-  });
-  
-  // Add layered passes (simplified - all use same blurred background)
-  const zIndexValues = Array.from(zIndexGroups.keys()).sort((a, b) => a - b);
-  let previousLayerName = 'bgPass'; // Previous layer for compositing
-  
-  for (let i = 0; i < zIndexValues.length; i++) {
-    const zIndex = zIndexValues[i];
-    const shapesInGroup = zIndexGroups.get(zIndex)!;
-    const isLastGroup = i === zIndexValues.length - 1;
-    
-    // Add the shape layer
-    const layerName = `zIndexLayer_${zIndex}`;
-    passes.push({
-      name: layerName,
-      shader: {
-        vertex: VertexShader,
-        fragment: FragmentMainShader, // Use main shader for blob merging within z-index group
-      },
-      inputs: {
-        u_bg: 'bgPass',
-        u_previousLayer: previousLayerName,
-      },
-      outputToScreen: isLastGroup, // Only the last z-index group outputs to screen
-      shapesInGroup: shapesInGroup, // Pass the shapes for this z-index
-    });
-    
-    // Update previous layer name for next iteration
-    previousLayerName = layerName;
-  }
-  
-  // If no shapes, add a simple pass-through
-  if (sortedShapes.length === 0) {
-    passes.push({
-      name: 'passthroughPass',
-      shader: {
-        vertex: VertexShader,
-        fragment: FragmentBgShader,
-      },
-      inputs: {
-        u_prevPassTexture: 'bgPass',
-      },
-      outputToScreen: true,
-    });
-  }
-  
-  return passes;
-}
+// HELPER REMOVED: buildLayeredRenderPasses is now obsolete.
 
 // Helper function to create a hover shape with merging animation
 function createHoverShape(
@@ -220,6 +149,9 @@ function App() {
     hoverShapeId: string | null; // ID of the temporary hover shape
     hoverAnimationStart: number | null; // Animation start timestamp
     hoverAnimationDuration: number; // Animation duration in ms
+    blueNoiseTexture: WebGLTexture | null;
+    frameCount: number;
+    startTime: number;
   }>({
     renderRaf: null,
     glStates: null,
@@ -252,6 +184,9 @@ function App() {
     hoverShapeId: null,
     hoverAnimationStart: null,
     hoverAnimationDuration: 500, // 500ms animation duration
+    blueNoiseTexture: null,
+    frameCount: 0,
+    startTime: performance.now(),
   });
   stateRef.current.canvasInfo = canvasInfo;
   stateRef.current.controls = controls;
@@ -302,6 +237,7 @@ function App() {
           zIndex: def.zIndex,
         }));
         stateRef.current.shapeManager = new ShapeManager(shapes);
+        stateRef.current.shapeManager.setShapeDefinitions(defs);
         // Force renderer to rebuild on next frame
         stateRef.current.lastShapesState = null;
       } catch (err) {
@@ -342,8 +278,10 @@ function App() {
     }
   }, [canvasInfo, gl]);
 
+  // Ensure we initialize a WebGL2 context so the fallback renderer can run
   useEffect(() => {
     if (!canvasRef.current) return;
+    if (gl) return; // already initialized
     
     const webgl2Context = canvasRef.current.getContext('webgl2', { antialias: false });
     if (!webgl2Context) {
@@ -351,30 +289,7 @@ function App() {
       return;
     }
     setGl(webgl2Context);
-    
-    // Check for compute shader support safely
-    let hasComputeShaders = false;
-    const maxComputeWorkGroupCountConst = (webgl2Context as any)['MAX_COMPUTE_WORK_GROUP_COUNT'];
-    if (maxComputeWorkGroupCountConst) {
-      const maxWorkGroupCount = webgl2Context.getParameter(maxComputeWorkGroupCountConst);
-      if (Array.isArray(maxWorkGroupCount) && maxWorkGroupCount.length > 0 && maxWorkGroupCount[0] > 0) {
-        hasComputeShaders = true;
-      }
-    }
-
-    if (hasComputeShaders) {
-      const oit = new OITSystem(webgl2Context, canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr);
-      setOitSystem(oit);
-      
-      const pass = new RenderPass(webgl2Context, { vertex: VertexShader, fragment: PassthroughFragmentShader }, true);
-      setDisplayPass(pass);
-
-    } else {
-      console.warn("Compute Shaders are not supported. Falling back to multi-pass rendering.");
-      // The existing MultiPassRenderer will be used as a fallback automatically.
-    }
-
-  }, [canvasInfo.width, canvasInfo.height, canvasInfo.dpr]);
+  }, [canvasRef.current]);
 
   useEffect(() => {
     if (!canvasRef.current || !gl) {
@@ -577,9 +492,34 @@ function App() {
 
     let renderer: MultiPassRenderer | null = null;
     if (!oitSystem) {
-      // Fallback: Initialize MultiPassRenderer if OIT is not supported
-      const initialShapes = stateRef.current.shapeManager.getVisibleShapes();
-      const initialPasses = buildLayeredRenderPasses(initialShapes);
+      const controls = stateRef.current.controls; // Moved this line up
+      const batchedData = stateRef.current.shapeManager.getBatchedShapeData(controls.maxShapesPerPass);
+      const initialPasses: any[] = [
+        { name: 'bgPass', shader: { vertex: VertexShader, fragment: FragmentBgShader } }
+      ];
+
+      let previousLayerName = 'bgPass';
+      batchedData.batches.forEach((batch, index) => {
+        const passName = `alphaBatch_${index}`;
+        const isLastBatch = index === batchedData.batches.length - 1;
+        initialPasses.push({
+          name: passName,
+          shader: { vertex: VertexShader, fragment: FragmentMainShader },
+          inputs: { u_bg: 'bgPass', u_previousLayer: previousLayerName },
+          outputToScreen: isLastBatch,
+        });
+        previousLayerName = passName;
+      });
+
+      if (batchedData.batches.length === 0) {
+        initialPasses.push({
+          name: 'passthroughPass',
+          shader: { vertex: VertexShader, fragment: FragmentBgShader, },
+          inputs: { u_prevPassTexture: 'bgPass', },
+          outputToScreen: true,
+        });
+      }
+      
       renderer = new MultiPassRenderer(canvasEl, initialPasses);
       stateRef.current.lastShapesState = stateRef.current.shapeManager.serialize();
     }
@@ -594,53 +534,53 @@ function App() {
     // let startTime: number | null = null
     const render = () => {
       raf = requestAnimationFrame(render);
+      stateRef.current.frameCount++;
       
-      if (oitSystem && displayPass && gl) {
+      const canvasInfo = stateRef.current.canvasInfo;
+      const controls = stateRef.current.controls;
+
+      if (oitSystem && gl) {
         // --- OIT Render Path ---
-        const visibleShapes = stateRef.current.shapeManager.getVisibleShapes();
-
-        const shapeDefsById = new Map(stateRef.current.shapeDefinitions.map(def => [def.id, def]));
-
-        const liquidShapes: LiquidShape[] = visibleShapes.map(shape => {
-          const def = shapeDefsById.get(shape.id);
-          return new LiquidShape(
-            shape.id,
-            shape.position,
-            shape.size,
-            shape.zIndex,
-            def ? def.tint : { r: 255, g: 255, b: 255, a: 1}, // default tint
-            shape.radius,
-            shape.roundness
-          );
-        });
-
+        // The old background texture logic has issues, let's create a placeholder
+        const bgTexture = createEmptyTexture(gl); // Simplified for now
 
         // Prepare global uniforms
         const globalUniforms = {
           u_resolution: [canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr],
+          u_dpr: canvasInfo.dpr,
           u_refFactor: controls.refFactor,
           u_refDispersion: controls.refDispersion,
           u_refThickness: controls.refThickness,
-          // You might need to manage and pass background textures here
-          // u_bg: bgTexture,
-          // u_blurredBg: blurredBgTexture,
+          u_tint: [
+            controls.tint.r / 255,
+            controls.tint.g / 255,
+            controls.tint.b / 255,
+            controls.tint.a,
+          ],
+          u_refFresnelRange: controls.refFresnelRange,
+          u_refFresnelHardness: controls.refFresnelHardness / 100,
+          u_refFresnelFactor: controls.refFresnelFactor / 100,
+          u_glareRange: controls.glareRange,
+          u_glareHardness: controls.glareHardness / 100,
+          u_glareConvergence: controls.glareConvergence / 100,
+          u_glareOppositeFactor: controls.glareOppositeFactor / 100,
+          u_glareFactor: controls.glareFactor / 100,
+          u_glareAngle: (controls.glareAngle * Math.PI) / 180,
+          u_mergeRatio: controls.mergeRatio,
+          STEP: controls.step,
         };
         
         // Render with OIT
-        const resultTexture = oitSystem.render(liquidShapes, globalUniforms);
-        
-        // Display result
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-
-        displayPass.render({ u_texture: resultTexture });
-        
-        gl.deleteTexture(resultTexture); // Clean up the texture after rendering
+        oitSystem.render(stateRef.current.shapeManager, bgTexture, globalUniforms);
 
       } else if (renderer) {
-        // --- Fallback Multi-Pass Render Path ---
+        // --- Fallback Multi-Pass Render Path with Dithering ---
+        const currentTime = (performance.now() - stateRef.current.startTime) / 1000.0;
+        
+        if (!stateRef.current.blueNoiseTexture && gl instanceof WebGL2RenderingContext) {
+            stateRef.current.blueNoiseTexture = createBlueNoiseTexture(gl);
+        }
+
         // Update hover animation if active
         if (stateRef.current.hoverAnimationStart !== null && stateRef.current.hoverShapeId) {
           const now = performance.now();
@@ -666,14 +606,41 @@ function App() {
 
         // Check if shapes have changed and rebuild passes if needed
         const currentShapesState = stateRef.current.shapeManager.serialize();
+        // The batching logic requires rebuilding passes differently.
+        // For now, we'll just pass uniforms. A full integration would
+        // dynamically create passes based on batches.
         if (currentShapesState !== stateRef.current.lastShapesState) {
-          const currentShapes = stateRef.current.shapeManager.getVisibleShapes();
-          const newPasses = buildLayeredRenderPasses(currentShapes);
+          const batchedData = stateRef.current.shapeManager.getBatchedShapeData(controls.maxShapesPerPass);
+          const newPasses: any[] = [
+            { name: 'bgPass', shader: { vertex: VertexShader, fragment: FragmentBgShader } }
+          ];
+
+          let previousLayerName = 'bgPass';
+          batchedData.batches.forEach((batch, index) => {
+            const passName = `alphaBatch_${index}`;
+            const isLastBatch = index === batchedData.batches.length - 1;
+            newPasses.push({
+              name: passName,
+              shader: { vertex: VertexShader, fragment: FragmentMainShader },
+              inputs: { u_bg: 'bgPass', u_previousLayer: previousLayerName },
+              outputToScreen: isLastBatch,
+            });
+            previousLayerName = passName;
+          });
+
+          if (batchedData.batches.length === 0) {
+            newPasses.push({
+              name: 'passthroughPass',
+              shader: { vertex: VertexShader, fragment: FragmentBgShader, },
+              inputs: { u_prevPassTexture: 'bgPass', },
+              outputToScreen: true,
+            });
+          }
+
           renderer.rebuildPasses(newPasses);
           stateRef.current.lastShapesState = currentShapesState;
         }
 
-        const canvasInfo = stateRef.current.canvasInfo;
         const textureUrl = stateRef.current.bgTextureUrl;
         if (
           !lastState.canvasInfo ||
@@ -745,13 +712,12 @@ function App() {
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-        const controls = stateRef.current.controls;
+        // Removed duplicate re-declaration of controls here
 
         const shapeSizeSpring = {
           x: controls.shapeWidth,
           y: undefined,
         };
-
 
         // Set global uniforms that apply to all passes
         renderer.setUniforms({
@@ -759,10 +725,15 @@ function App() {
           u_dpr: canvasInfo.dpr,
           u_mouse: [stateRef.current.canvasPointerPos.x, stateRef.current.canvasPointerPos.y],
           u_glareAngle: (controls.glareAngle * Math.PI) / 180,
+          // Dithering uniforms
+          u_time: currentTime,
+          u_frameCount: stateRef.current.frameCount,
+          u_ditherStrength: controls.ditherStrength,
+          u_ditherType: controls.ditherType,
+          u_blueNoiseTex: stateRef.current.blueNoiseTexture,
         });
 
         // Build pass-specific uniforms
-        
         const passUniforms: Record<string, Record<string, any>> = {
           bgPass: {
             u_bgType: controls.bgType,
@@ -788,6 +759,79 @@ function App() {
           },
         };
 
+        const batchedData = stateRef.current.shapeManager.getBatchedShapeData(controls.maxShapesPerPass);
+        batchedData.batches.forEach((batch, index) => {
+          const passName = `alphaBatch_${index}`;
+
+          // Create shape data for this batch only
+          const batchShapeData = {
+            positions: [] as number[],
+            sizes: [] as number[],
+            radii: [] as number[],
+            roundnesses: [] as number[],
+            visibilities: [] as number[],
+            zIndices: [] as number[],
+            isHoverShape: [] as number[],
+            tints: [] as number[],
+          };
+          
+          const maxShapes = controls.maxShapesPerPass;
+          for (let j = 0; j < maxShapes; j++) {
+              if (j < batch.shapes.length) {
+                  const shape = batch.shapes[j];
+                  batchShapeData.positions.push(shape.position.x, shape.position.y);
+                  batchShapeData.sizes.push(shape.size.width, shape.size.height);
+                  batchShapeData.radii.push(shape.radius);
+                  batchShapeData.roundnesses.push(shape.roundness);
+                  batchShapeData.visibilities.push(shape.visible ? 1.0 : 0.0);
+                  batchShapeData.zIndices.push(shape.zIndex);
+                  batchShapeData.isHoverShape.push(shape.id === 'hover_shape' ? 1.0 : 0.0);
+                  const tint = shape.tint || {r:255,g:255,b:255,a:1};
+                  batchShapeData.tints.push(tint.r/255, tint.g/255, tint.b/255, tint.a);
+            } else {
+                  batchShapeData.positions.push(0, 0);
+                  batchShapeData.sizes.push(0, 0);
+                  batchShapeData.radii.push(0);
+                  batchShapeData.roundnesses.push(0);
+                  batchShapeData.visibilities.push(0);
+                  batchShapeData.zIndices.push(0);
+                  batchShapeData.isHoverShape.push(0.0);
+                  batchShapeData.tints.push(0,0,0,0);
+            }
+          }
+          
+          passUniforms[passName] = {
+            u_shapeCount: batch.shapes.length,
+            u_shapePositions: batchShapeData.positions,
+            u_shapeSizes: batchShapeData.sizes,
+            u_shapeRadii: batchShapeData.radii,
+            u_shapeRoundnesses: batchShapeData.roundnesses,
+            u_shapeVisibilities: batchShapeData.visibilities,
+            u_shapeZIndices: batchShapeData.zIndices,
+            u_isHoverShape: batchShapeData.isHoverShape,
+            u_tint: [
+              batch.tint.r / 255,
+              batch.tint.g / 255,
+              batch.tint.b / 255,
+              controls.shapeAlpha, // Use global alpha control
+            ],
+            u_mergeRatio: controls.mergeRatio,
+            // Glass effect properties
+            u_refThickness: controls.refThickness,
+            u_refFactor: controls.refFactor,
+            u_refDispersion: controls.refDispersion,
+            u_refFresnelRange: controls.refFresnelRange,
+            u_refFresnelHardness: controls.refFresnelHardness / 100,
+            u_refFresnelFactor: controls.refFresnelFactor / 100,
+            u_glareRange: controls.glareRange,
+            u_glareHardness: controls.glareHardness / 100,
+            u_glareConvergence: controls.glareConvergence / 100,
+            u_glareOppositeFactor: controls.glareOppositeFactor / 100,
+            u_glareFactor: controls.glareFactor / 100,
+            STEP: controls.step,
+          };
+        });
+
         // Add uniforms for the single shape mask pass (much simpler!)
         const currentShapes = stateRef.current.shapeManager.getVisibleShapes();
         
@@ -806,105 +850,105 @@ function App() {
         }
 
         // Add uniforms for each z-index layer (simplified)
-        const currentPasses = buildLayeredRenderPasses(currentShapes);
+        // const currentPasses = buildLayeredRenderPasses(currentShapes); // This line is no longer needed
         
         // Group shapes by z-index for uniform generation
-        const zIndexGroups = new Map<number, Shape[]>();
-        currentShapes.forEach(shape => {
-          if (!zIndexGroups.has(shape.zIndex)) {
-            zIndexGroups.set(shape.zIndex, []);
-          }
-          zIndexGroups.get(shape.zIndex)!.push(shape);
-        });
+        // const zIndexGroups = new Map<number, Shape[]>(); // This line is no longer needed
+        // currentShapes.forEach(shape => { // This line is no longer needed
+        //   if (!zIndexGroups.has(shape.zIndex)) { // This line is no longer needed
+        //     zIndexGroups.set(shape.zIndex, []); // This line is no longer needed
+        //   } // This line is no longer needed
+        //   zIndexGroups.get(shape.zIndex)!.push(shape); // This line is no longer needed
+        // }); // This line is no longer needed
         
         // Add uniforms for each z-index layer
-        const zIndexValues = Array.from(zIndexGroups.keys()).sort((a, b) => a - b);
-        for (let i = 0; i < zIndexValues.length; i++) {
-          const zIndex = zIndexValues[i];
-          const shapesInGroup = zIndexGroups.get(zIndex)!;
-          const passName = `zIndexLayer_${zIndex}`;
+        // const zIndexValues = Array.from(zIndexGroups.keys()).sort((a, b) => a - b); // This line is no longer needed
+        // for (let i = 0; i < zIndexValues.length; i++) { // This line is no longer needed
+        //   const zIndex = zIndexValues[i]; // This line is no longer needed
+        //   const shapesInGroup = zIndexGroups.get(zIndex)!; // This line is no longer needed
+        //   const passName = `zIndexLayer_${zIndex}`; // This line is no longer needed
           
-          // Get tint - prioritize hover shape tint if present, otherwise use first shape's tint
-          let groupTint: ColorValue;
-          const hoverShape = shapesInGroup.find(s => s.id === 'hover_shape');
-          if (hoverShape && stateRef.current.hoveredShapeId) {
-            // Use the tint of the original hovered shape for the hover shape
-            const hoveredShapeDef = stateRef.current.shapeDefinitions.find(def => def.id === stateRef.current.hoveredShapeId);
-            groupTint = hoveredShapeDef ? hoveredShapeDef.tint : controls.tint;
-          } else {
-            // Use the tint of the first shape in the group
-            const firstShape = shapesInGroup[0];
-            const shapeDef = stateRef.current.shapeDefinitions.find(def => def.id === firstShape.id);
-            groupTint = shapeDef ? shapeDef.tint : controls.tint;
-          }
+        //   // Get tint - prioritize hover shape tint if present, otherwise use first shape's tint // This line is no longer needed
+        //   let groupTint: ColorValue; // This line is no longer needed
+        //   const hoverShape = shapesInGroup.find(s => s.id === 'hover_shape'); // This line is no longer needed
+        //   if (hoverShape && stateRef.current.hoveredShapeId) { // This line is no longer needed
+        //     // Use the tint of the original hovered shape for the hover shape // This line is no longer needed
+        //     const hoveredShapeDef = stateRef.current.shapeDefinitions.find(def => def.id === stateRef.current.hoveredShapeId); // This line is no longer needed
+        //     groupTint = hoveredShapeDef ? hoveredShapeDef.tint : controls.tint; // This line is no longer needed
+        //   } else { // This line is no longer needed
+        //     // Use the tint of the first shape in the group // This line is no longer needed
+        //     const firstShape = shapesInGroup[0]; // This line is no longer needed
+        //     const shapeDef = stateRef.current.shapeDefinitions.find(def => def.id === firstShape.id); // This line is no longer needed
+        //     groupTint = shapeDef ? shapeDef.tint : controls.tint; // This line is no longer needed
+        //   } // This line is no longer needed
           
-          // Create shape data for this z-index group only
-          const groupShapeData = {
-            positions: [] as number[],
-            sizes: [] as number[],
-            radii: [] as number[],
-            roundnesses: [] as number[],
-            visibilities: [] as number[],
-            zIndices: [] as number[],
-            isHoverShape: [] as number[],
-          };
+        //   // Create shape data for this z-index group only // This line is no longer needed
+        //   const groupShapeData = { // This line is no longer needed
+        //     positions: [] as number[], // This line is no longer needed
+        //     sizes: [] as number[], // This line is no longer needed
+        //     radii: [] as number[], // This line is no longer needed
+        //     roundnesses: [] as number[], // This line is no longer needed
+        //     visibilities: [] as number[], // This line is no longer needed
+        //     zIndices: [] as number[], // This line is no longer needed
+        //     isHoverShape: [] as number[], // This line is no longer needed
+        //   }; // This line is no longer needed
           
-          // Fill data for shapes in this group (up to 20 shapes max)
-          for (let j = 0; j < 20; j++) {
-            if (j < shapesInGroup.length) {
-              const shape = shapesInGroup[j];
-              groupShapeData.positions.push(shape.position.x, shape.position.y);
-              groupShapeData.sizes.push(shape.size.width, shape.size.height);
-              groupShapeData.radii.push(shape.radius);
-              groupShapeData.roundnesses.push(shape.roundness);
-              groupShapeData.visibilities.push(shape.visible ? 1.0 : 0.0);
-              groupShapeData.zIndices.push(shape.zIndex);
-              groupShapeData.isHoverShape.push(shape.id === 'hover_shape' ? 1.0 : 0.0);
-            } else {
-              // Fill with default values for unused slots
-              groupShapeData.positions.push(0, 0);
-              groupShapeData.sizes.push(0, 0);
-              groupShapeData.radii.push(0);
-              groupShapeData.roundnesses.push(0);
-              groupShapeData.visibilities.push(0);
-              groupShapeData.zIndices.push(0);
-              groupShapeData.isHoverShape.push(0.0);
-            }
-          }
+        //   // Fill data for shapes in this group (up to 20 shapes max) // This line is no longer needed
+        //   for (let j = 0; j < 20; j++) { // This line is no longer needed
+        //     if (j < shapesInGroup.length) { // This line is no longer needed
+        //       const shape = shapesInGroup[j]; // This line is no longer needed
+        //       groupShapeData.positions.push(shape.position.x, shape.position.y); // This line is no longer needed
+        //       groupShapeData.sizes.push(shape.size.width, shape.size.height); // This line is no longer needed
+        //       groupShapeData.radii.push(shape.radius); // This line is no longer needed
+        //       groupShapeData.roundnesses.push(shape.roundness); // This line is no longer needed
+        //       groupShapeData.visibilities.push(shape.visible ? 1.0 : 0.0); // This line is no longer needed
+        //       groupShapeData.zIndices.push(shape.zIndex); // This line is no longer needed
+        //       groupShapeData.isHoverShape.push(shape.id === 'hover_shape' ? 1.0 : 0.0); // This line is no longer needed
+        //     } else { // This line is no longer needed
+        //       // Fill with default values for unused slots // This line is no longer needed
+        //       groupShapeData.positions.push(0, 0); // This line is no longer needed
+        //       groupShapeData.sizes.push(0, 0); // This line is no longer needed
+        //       groupShapeData.radii.push(0); // This line is no longer needed
+        //       groupShapeData.roundnesses.push(0); // This line is no longer needed
+        //       groupShapeData.visibilities.push(0); // This line is no longer needed
+        //       groupShapeData.zIndices.push(0); // This line is no longer needed
+        //       groupShapeData.isHoverShape.push(0.0); // This line is no longer needed
+        //     } // This line is no longer needed
+        //   } // This line is no longer needed
           
-          passUniforms[passName] = {
-            // Group shape data for blob merging
-            u_shapeCount: shapesInGroup.length,
-            u_shapePositions: groupShapeData.positions,
-            u_shapeSizes: groupShapeData.sizes,
-            u_shapeRadii: groupShapeData.radii,
-            u_shapeRoundnesses: groupShapeData.roundnesses,
-            u_shapeVisibilities: groupShapeData.visibilities,
-            u_shapeZIndices: groupShapeData.zIndices,
-            u_isHoverShape: groupShapeData.isHoverShape,
-            u_mergeRatio: controls.mergeRatio,
+        //   passUniforms[passName] = { // This line is no longer needed
+        //     // Group shape data for blob merging // This line is no longer needed
+        //     u_shapeCount: shapesInGroup.length, // This line is no longer needed
+        //     u_shapePositions: groupShapeData.positions, // This line is no longer needed
+        //     u_shapeSizes: groupShapeData.sizes, // This line is no longer needed
+        //     u_shapeRadii: groupShapeData.radii, // This line is no longer needed
+        //     u_shapeRoundnesses: groupShapeData.roundnesses, // This line is no longer needed
+        //     u_shapeVisibilities: groupShapeData.visibilities, // This line is no longer needed
+        //     u_shapeZIndices: groupShapeData.zIndices, // This line is no longer needed
+        //     u_isHoverShape: groupShapeData.isHoverShape, // This line is no longer needed
+        //     u_mergeRatio: controls.mergeRatio, // This line is no longer needed
             
-            // Glass effect properties - using group tint
-            u_tint: [
-              groupTint.r / 255,
-              groupTint.g / 255,
-              groupTint.b / 255,
-              groupTint.a,
-            ],
-            u_refThickness: controls.refThickness,
-            u_refFactor: controls.refFactor,
-            u_refDispersion: controls.refDispersion,
-            u_refFresnelRange: controls.refFresnelRange,
-            u_refFresnelHardness: controls.refFresnelHardness / 100,
-            u_refFresnelFactor: controls.refFresnelFactor / 100,
-            u_glareRange: controls.glareRange,
-            u_glareHardness: controls.glareHardness / 100,
-            u_glareConvergence: controls.glareConvergence / 100,
-            u_glareOppositeFactor: controls.glareOppositeFactor / 100,
-            u_glareFactor: controls.glareFactor / 100,
-            STEP: controls.step,
-          };
-        }
+        //     // Glass effect properties - using group tint // This line is no longer needed
+        //     u_tint: [ // This line is no longer needed
+        //       groupTint.r / 255, // This line is no longer needed
+        //       groupTint.g / 255, // This line is no longer needed
+        //       groupTint.b / 255, // This line is no longer needed
+        //       groupTint.a, // This line is no longer needed
+        //     ], // This line is no longer needed
+        //     u_refThickness: controls.refThickness, // This line is no longer needed
+        //     u_refFactor: controls.refFactor, // This line is no longer needed
+        //     u_refDispersion: controls.refDispersion, // This line is no longer needed
+        //     u_refFresnelRange: controls.refFresnelRange, // This line is no longer needed
+        //     u_refFresnelHardness: controls.refFresnelHardness / 100, // This line is no longer needed
+        //     u_refFresnelFactor: controls.refFresnelFactor / 100, // This line is no longer needed
+        //     u_glareRange: controls.glareRange, // This line is no longer needed
+        //     u_glareHardness: controls.glareHardness / 100, // This line is no longer needed
+        //     u_glareConvergence: controls.glareConvergence / 100, // This line is no longer needed
+        //     u_glareOppositeFactor: controls.glareOppositeFactor / 100, // This line is no longer needed
+        //     u_glareFactor: controls.glareFactor / 100, // This line is no longer needed
+        //     STEP: controls.step, // This line is no longer needed
+        //   }; // This line is no longer needed
+        // } // This line is no longer needed
 
         renderer.render(passUniforms);
       }

@@ -45,7 +45,84 @@ uniform float u_mergeRatio; // Controls how much shapes blend together
 
 uniform int STEP;
 
+// Dithering Uniforms from Guide
+uniform float u_time;
+uniform int u_frameCount;
+uniform float u_ditherStrength; // Control dithering intensity (0.0 to 1.0)
+uniform int u_ditherType; // 0 = Bayer, 1 = Hash, 2 = Blue Noise, 3 = Temporal
+uniform sampler2D u_blueNoiseTex; // Blue noise texture for advanced dithering
+
 out vec4 fragColor;
+
+// High-quality hash function for procedural noise
+float hash12(vec2 p) {
+    vec3 p3  = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+// Improved hash for temporal stability
+float hash13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+// Bayer matrix 4x4 for ordered dithering
+float bayerMatrix4x4(vec2 pos) {
+    int x = int(mod(pos.x, 4.0));
+    int y = int(mod(pos.y, 4.0));
+    
+    // Bayer matrix values / 16.0 for normalization
+    const float matrix[16] = float[](
+        0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
+        12.0/16.0, 4.0/16.0, 14.0/16.0,  6.0/16.0,
+        3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
+        15.0/16.0, 7.0/16.0, 13.0/16.0,  5.0/16.0
+    );
+    
+    return matrix[y * 4 + x];
+}
+
+// Advanced temporal dithering with spatial coherence
+float getAdvancedDitherThreshold(vec2 screenPos, float alpha, float time) {
+    float threshold = 0.5;
+    
+    if (u_ditherType == 0) {
+        // Bayer matrix dithering - spatially stable
+        threshold = bayerMatrix4x4(screenPos);
+        
+    } else if (u_ditherType == 1) {
+        // Hash-based dithering - good for distant objects
+        vec3 hashInput = vec3(screenPos, floor(time * 60.0)); // 60 FPS temporal step
+        threshold = hash13(hashInput);
+        
+        // Apply temporal smoothing to reduce flicker
+        float prevThreshold = hash13(vec3(screenPos, floor(time * 60.0) - 1.0));
+        threshold = mix(prevThreshold, threshold, 0.1);
+        
+    } else if (u_ditherType == 2) {
+        // Blue noise dithering - best quality
+        vec2 noiseUV = screenPos / vec2(textureSize(u_blueNoiseTex, 0));
+        float blueNoise = texture(u_blueNoiseTex, noiseUV).r;
+        
+        // Add temporal variation while preserving spatial blue noise
+        float temporalOffset = hash12(vec2(floor(time * 30.0), 0.0)) * 0.1;
+        threshold = fract(blueNoise + temporalOffset);
+        
+    } else if (u_ditherType == 3) {
+        // Spatiotemporal blue noise (most advanced)
+        vec2 noiseUV = screenPos / vec2(textureSize(u_blueNoiseTex, 0));
+        vec3 stbnCoord = vec3(noiseUV, mod(time * 60.0, float(textureSize(u_blueNoiseTex, 0).y)));
+        threshold = texture(u_blueNoiseTex, stbnCoord.xy + vec2(0.0, stbnCoord.z / float(textureSize(u_blueNoiseTex, 0).y))).r;
+    }
+    
+    // Apply alpha-dependent bias for better coverage
+    float alphaBias = (alpha - 0.5) * 0.1;
+    threshold = clamp(threshold + alphaBias, 0.0, 1.0);
+    
+    return threshold;
+}
 
 float sdCircle(vec2 p, float r) {
   return length(p) - r;
@@ -596,10 +673,9 @@ void main() {
       // Apply same blending logic everywhere
       vec4 combinedRefraction = mix(blurredPixel, previousLayerPixel, 0.4);
       
-      // Apply same tinting everywhere
-      outColor = mix(combinedRefraction, vec4(u_tint.r, u_tint.g, u_tint.b, 1.0), u_tint.a * 0.8);
+      // Calculate combined alpha from tint and effects
+      float combinedAlpha = u_tint.a;
 
-      // Add fresnel effect (applied consistently to both interior and edge areas)
       float fresnelFactor = clamp(
         pow(
           1.0 +
@@ -610,6 +686,28 @@ void main() {
         0.0,
         1.0
       );
+      
+      // Add fresnel contribution to alpha
+      float fresnelAlpha = fresnelFactor * u_refFresnelFactor * 0.3;
+      combinedAlpha = clamp(combinedAlpha + fresnelAlpha, 0.0, 1.0);
+      
+      // Apply alpha testing with advanced dithering
+      float ditherThreshold = getAdvancedDitherThreshold(
+          gl_FragCoord.xy, 
+          combinedAlpha, 
+          u_time
+      );
+      
+      // Smooth alpha testing to reduce hard edges
+      float alphaTest = combinedAlpha - ditherThreshold;
+      alphaTest = mix(alphaTest, smoothstep(0.0, 0.1, alphaTest), u_ditherStrength);
+      
+      if (alphaTest < 0.0) {
+          discard;
+      }
+      
+      // Apply liquid glass effects to surviving fragments
+      outColor = mix(combinedRefraction, vec4(u_tint.r, u_tint.g, u_tint.b, 1.0), u_tint.a * 0.8);
 
       vec3 fresnelTintLCH = SRGB_TO_LCH(
         mix(vec3(1.0), vec3(u_tint.r, u_tint.g, u_tint.b), u_tint.a * 0.5)
@@ -670,12 +768,12 @@ void main() {
       outColor = texture(u_previousLayer, v_uv);
     }
 
-    // smooth transition only at shape edges
-    outColor = mix(outColor, texture(u_previousLayer, v_uv), smoothstep(-0.0005, 0.0005, merged));
+    // smooth transition only at shape edges - REMOVED for dithering
+    // outColor = mix(outColor, texture(u_previousLayer, v_uv), smoothstep(-0.0005, 0.0005, merged));
 
   }
 
-  fragColor = outColor;
+  fragColor = vec4(outColor.rgb, 1.0); // Always output opaque pixels
 }
 
 
