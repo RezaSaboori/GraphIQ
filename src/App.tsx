@@ -22,23 +22,6 @@ import VertexShader from './shaders/vertex.glsl?raw';
 import FragmentBgShader from './shaders/fragment-bg.glsl?raw';
  
 import FragmentMainShader from './shaders/fragment-main.glsl?raw';
-import FragmentIndividualShader from './shaders/fragment-individual.glsl?raw';
-import FragmentLayeredShapeShader from './shaders/fragment-layered-shape.glsl?raw';
-import { Controller } from '@react-spring/web';
- 
-
-import bgGrid from '@/assets/bg-grid.png';
-import bgBars from '@/assets/bg-bars.png';
-import bgHalf from '@/assets/bg-half.png';
-import bgTimcook from '@/assets/bg-timcook.png';
-import bgUI from '@/assets/bg-ui.svg';
-import bgTahoeLightImg from '@/assets/bg-tahoe-light.webp';
-import bgText from '@/assets/bg-text.jpg';
-import bgBuildings from '@/assets/bg-buildings.png';
-import bgVideoFish from '@/assets/bg-video-fish.mp4';
-import bgVideo2 from '@/assets/bg-video-2.mp4';
-import bgVideo3 from '@/assets/bg-video-3.mp4';
-
 import { useLevaControls } from './Controls';
 import { ShapeManager, type Shape } from './utils/ShapeManager';
 import { LiquidShape } from './elements/LiquidShape';
