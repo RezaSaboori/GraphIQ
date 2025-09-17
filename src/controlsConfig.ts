@@ -327,7 +327,7 @@ export const defaultControls: DefaultControls = {
   ditherType: 2,
   maxShapesPerPass: 50,
   enableDepthPrepass: false,
-  shapeAlpha: 0.5,
+  shapeAlpha: 0.4,
   // Additional included values for completeness
   shapeHeight: 200,
   shapeSqueeze: 0.5,
