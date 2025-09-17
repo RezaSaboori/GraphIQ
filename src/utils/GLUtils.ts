@@ -475,6 +475,18 @@ export class RenderPass {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.bindVertexArray(null);
 
+    // Unbind textures to be safe
+    if (uniforms) {
+      let textureCount = 0;
+      Object.values(uniforms).forEach((value) => {
+        if (value instanceof WebGLTexture) {
+          gl.activeTexture(gl.TEXTURE0 + textureCount);
+          gl.bindTexture(gl.TEXTURE_2D, null);
+          textureCount += 1;
+        }
+      });
+    }
+
     // 解绑FBO
     if (this.frameBuffer) {
       this.frameBuffer.unbind();

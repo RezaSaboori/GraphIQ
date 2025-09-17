@@ -352,10 +352,15 @@ function App() {
     }
     setGl(webgl2Context);
     
-    // Check for compute shader support
-    // `getParameter(MAX_COMPUTE_WORK_GROUP_COUNT)` should return a non-zero array for support.
-    const maxWorkGroupCount = webgl2Context.getParameter(0x91BE); // MAX_COMPUTE_WORK_GROUP_COUNT
-    const hasComputeShaders = Array.isArray(maxWorkGroupCount) && maxWorkGroupCount.length > 0 && maxWorkGroupCount[0] > 0;
+    // Check for compute shader support safely
+    let hasComputeShaders = false;
+    const maxComputeWorkGroupCountConst = (webgl2Context as any)['MAX_COMPUTE_WORK_GROUP_COUNT'];
+    if (maxComputeWorkGroupCountConst) {
+      const maxWorkGroupCount = webgl2Context.getParameter(maxComputeWorkGroupCountConst);
+      if (Array.isArray(maxWorkGroupCount) && maxWorkGroupCount.length > 0 && maxWorkGroupCount[0] > 0) {
+        hasComputeShaders = true;
+      }
+    }
 
     if (hasComputeShaders) {
       const oit = new OITSystem(webgl2Context, canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr);
