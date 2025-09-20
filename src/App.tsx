@@ -144,6 +144,7 @@ function App() {
     hoverShapeId: string | null; // ID of the temporary hover shape
     hoverAnimationStart: number | null; // Animation start timestamp
     hoverAnimationDuration: number; // Animation duration in ms
+    hoverLeaveTimer: ReturnType<typeof setTimeout> | null; // Timer for delayed disappearance
     blueNoiseTexture: WebGLTexture | null;
     frameCount: number;
     startTime: number;
@@ -188,6 +189,7 @@ function App() {
     hoverShapeId: null,
     hoverAnimationStart: null,
     hoverAnimationDuration: 500, // 500ms animation duration
+    hoverLeaveTimer: null,
     blueNoiseTexture: null,
     frameCount: 0,
     startTime: performance.now(),
@@ -427,42 +429,66 @@ function App() {
           y: e.clientY - canvasRect.top,
         };
 
-        const hoveredShapeId = stateRef.current.shapeManager.getShapeAtPosition(mousePos, canvasInfo);
+        const hoveredShapeId = stateRef.current.shapeManager.getShapeAtPosition(
+          mousePos,
+          canvasInfo
+        );
+
+        const currentParentId = stateRef.current.hoveredShapeId;
+        const currentChildId = stateRef.current.hoverShapeId;
+
+        // If there's a leave timer, clear it because we are back over a shape
+        if (hoveredShapeId && stateRef.current.hoverLeaveTimer) {
+          clearTimeout(stateRef.current.hoverLeaveTimer);
+          stateRef.current.hoverLeaveTimer = null;
+        }
         
-        // Only consider original shapes (not the hover shape itself)
-        const isHoveringOriginalShape = hoveredShapeId && hoveredShapeId !== 'hover_shape';
+        // If hovering over the child, do nothing to keep it visible
+        if (hoveredShapeId && hoveredShapeId === currentChildId) {
+          return;
+        }
         
-        if (isHoveringOriginalShape !== (stateRef.current.hoveredShapeId !== null)) {
-          if (isHoveringOriginalShape) {
-            // Started hovering over a shape
-            stateRef.current.hoveredShapeId = hoveredShapeId;
-            
-            // Remove existing hover shape if any
-            if (stateRef.current.hoverShapeId) {
-              stateRef.current.shapeManager.removeShape(stateRef.current.hoverShapeId);
-            }
-            
-            // Start merge animation
-            stateRef.current.hoverAnimationStart = performance.now();
-            
-            // Create new hover shape with initial animation state
-            const originalShape = stateRef.current.shapeManager.getShape(hoveredShapeId);
-            if (originalShape) {
-              const hoverShapeData = createHoverShape(originalShape, 0, canvasInfo);
-              const hoverShapeId = stateRef.current.shapeManager.addShape(hoverShapeData);
-              stateRef.current.hoverShapeId = hoverShapeId;
-            }
-          } else {
-            // Stopped hovering over shapes
+        // If we are hovering a new parent shape (or the first one)
+        if (
+          hoveredShapeId &&
+          hoveredShapeId !== 'hover_shape' &&
+          hoveredShapeId !== currentParentId
+        ) {
+          // A new hover has started on a valid parent shape
+          stateRef.current.hoveredShapeId = hoveredShapeId;
+
+          if (currentChildId) {
+            stateRef.current.shapeManager.removeShape(currentChildId);
+          }
+
+          stateRef.current.hoverAnimationStart = performance.now();
+
+          const originalShape =
+            stateRef.current.shapeManager.getShape(hoveredShapeId);
+          if (originalShape) {
+            const hoverShapeData = createHoverShape(
+              originalShape,
+              0,
+              canvasInfo
+            );
+            const newHoverShapeId =
+              stateRef.current.shapeManager.addShape(hoverShapeData);
+            stateRef.current.hoverShapeId = newHoverShapeId;
+          }
+        } else if (!hoveredShapeId && currentParentId) {
+          // Mouse left the parent and child, so start a timer to remove the hover shape
+          if (stateRef.current.hoverLeaveTimer) {
+            clearTimeout(stateRef.current.hoverLeaveTimer);
+          }
+          stateRef.current.hoverLeaveTimer = setTimeout(() => {
             stateRef.current.hoveredShapeId = null;
             stateRef.current.hoverAnimationStart = null;
-            
-            // Remove hover shape
             if (stateRef.current.hoverShapeId) {
               stateRef.current.shapeManager.removeShape(stateRef.current.hoverShapeId);
               stateRef.current.hoverShapeId = null;
             }
-          }
+            stateRef.current.hoverLeaveTimer = null;
+          }, 500); // 500ms delay to disappear
         }
       }
     };
@@ -485,6 +511,11 @@ function App() {
         dpr: canvasInfo.dpr,
       });
       
+      if (clickedShapeId === 'hover_shape' && stateRef.current.hoveredShapeId) {
+        alert(`the child shape of shape[${stateRef.current.hoveredShapeId}] is clicked`);
+        return;
+      }
+
       if (clickedShapeId) {
         const clickedShape = stateRef.current.shapeManager.getShape(clickedShapeId);
         if (clickedShape) {
@@ -513,6 +544,9 @@ function App() {
 
     const onPointerLeave = () => {
       // Clean up hover shape when mouse leaves canvas
+      if (stateRef.current.hoverLeaveTimer) {
+        clearTimeout(stateRef.current.hoverLeaveTimer);
+      }
       stateRef.current.hoveredShapeId = null;
       stateRef.current.hoverAnimationStart = null;
       if (stateRef.current.hoverShapeId) {
@@ -1007,6 +1041,9 @@ function App() {
     raf = requestAnimationFrame(render);
 
     return () => {
+      if (stateRef.current.hoverLeaveTimer) {
+        clearTimeout(stateRef.current.hoverLeaveTimer);
+      }
       canvasEl.removeEventListener('pointermove', onPointerMove);
       canvasEl.removeEventListener('pointerdown', onPointerDown);
       canvasEl.removeEventListener('pointerup', onPointerUp);
