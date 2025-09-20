@@ -27,6 +27,7 @@ import { useLevaControls } from './Controls';
 import { ShapeManager, type Shape } from './utils/ShapeManager';
 import { LiquidShape } from './elements/LiquidShape';
 import PerformanceCard from './components/PerformanceCard';
+import { Camera } from './utils/Camera';
 
 // Import ColorValue type for per-shape tints
 type ColorValue = [number, number, number]; // [r, g, b] array format
@@ -37,53 +38,44 @@ type ColorValue = [number, number, number]; // [r, g, b] array format
 function createHoverShape(
   originalShape: Shape,
   animationProgress: number, // 0 to 1 for merge animation
-  canvasInfo: { width: number; height: number; dpr: number }
+  canvasInfo: { width: number; height: number; dpr: number },
+  camera: Camera
 ): Partial<Shape> {
   const dpr = canvasInfo.dpr;
   
-  // Bottom-right direction (diagonal down-right)
-  // CRITICAL: In this coordinate system, shape positions are inverted!
-  // Looking at ShapeManager.ts line 172-173: shapeX = centerX - shape.position.x (X is inverted!)
-  // So for bottom-right: we need negative X (left in shape space = right on screen), positive Y (down)
-  const dirX = -1; // Left in shape space = Right on screen (due to inversion)
-  const dirY = 1; // Down (positive Y is down)
+  // Bottom-right direction in world space. Y is up.
+  const dirX = 1;
+  const dirY = -1;
   const dirLength = Math.sqrt(dirX * dirX + dirY * dirY);
   const normalizedDirX = dirX / dirLength;
   const normalizedDirY = dirY / dirLength;
   
-  // Calculate the edge position of the mother shape in the bottom-right direction
+  // Use world dimensions
   const motherHalfWidth = originalShape.size.width / 2;
   const motherHalfHeight = originalShape.size.height / 2;
   
-  // Always use the actual bottom-right corner of the shape
-  // Corner position relative to shape center (accounting for coordinate inversion)
-  const cornerX = -motherHalfWidth;  // Right corner (inverted coordinate system)
-  const cornerY = motherHalfHeight;  // Bottom corner
+  // Corner position relative to shape center in world space
+  const cornerX = motherHalfWidth;
+  const cornerY = -motherHalfHeight;
   
-  // Calculate consistent spacing that maintains the same visual distance regardless of shape size
-  // Use the larger dimension to normalize spacing, ensuring consistent visual appearance
+  // Consistent spacing in world units
+  const baseSpacing = 20;
   const maxDimension = Math.max(motherHalfWidth, motherHalfHeight);
-  const baseSpacing = 20 * dpr;
-  
-  // Scale spacing based on shape size to maintain consistent visual distance
-  const scaledSpacing = baseSpacing + (maxDimension * 0.1); // Add 10% of largest dimension
+  const scaledSpacing = baseSpacing + (maxDimension * 0.1);
   
   const finalOffsetX = cornerX + (normalizedDirX * scaledSpacing);
   const finalOffsetY = cornerY + (normalizedDirY * scaledSpacing);
   
-  // Final position is mother position + border offset + spacing
   const finalX = originalShape.position.x + finalOffsetX;
   const finalY = originalShape.position.y + finalOffsetY;
   
-  // Animation: start from the corner of mother shape (with merge bubble effect)
   const startX = originalShape.position.x + cornerX;
   const startY = originalShape.position.y + cornerY;
   
   const hoverX = startX + (finalX - startX) * animationProgress;
   const hoverY = startY + (finalY - startY) * animationProgress;
   
-  // Animation: scale from 0 to full size with easing
-  const maxSize = 50 * dpr;
+  const maxSize = 50; // Max size in world units
   const easeProgress = 1 - Math.pow(1 - animationProgress, 3); // Ease out cubic
   const currentSize = maxSize * easeProgress;
   
@@ -120,6 +112,8 @@ function App() {
       programs: Record<string, WebGLProgram>;
       vao: WebGLVertexArrayObject;
     } | null;
+    camera: Camera | null;
+    isPanning: boolean;
     canvasPointerPos: { x: number; y: number };
     controls: typeof controls;
     bgTextureUrl: string | null;
@@ -162,6 +156,8 @@ function App() {
     renderRaf: null,
     glStates: null,
     canvasInfo,
+    camera: null,
+    isPanning: false,
     canvasPointerPos: {
       x: 0,
       y: 0,
@@ -263,8 +259,8 @@ function App() {
         // Map dataset to internal definitions, applying DPR and width from controls
         const defs = data.map((item) => ({
           id: item.id,
-          position: { x: item.position.x * dpr, y: item.position.y * dpr },
-          size: { width: controls.shapeWidth * dpr, height: item.size.height * dpr },
+          position: { x: item.position.x, y: item.position.y },
+          size: { width: controls.shapeWidth, height: item.size.height },
           zIndex: item.zIndex,
           tint: item.tint,
         }));
@@ -291,11 +287,18 @@ function App() {
 
   useLayoutEffect(() => {
     const onResize = () => {
+      const newWidth = window.innerWidth;
+      const newHeight = window.innerHeight;
+      const dpr = window.devicePixelRatio;
       setCanvasInfo({
-        width: window.innerWidth,
-        height: window.innerHeight,
-        dpr: window.devicePixelRatio,
+        width: newWidth,
+        height: newHeight,
+        dpr: dpr,
       });
+
+      if (stateRef.current.camera) {
+        stateRef.current.camera.setViewportSize(newWidth, newHeight);
+      }
     };
     window.addEventListener('resize', onResize);
     onResize();
@@ -311,6 +314,10 @@ function App() {
     }
     canvasRef.current.width = canvasInfo.width * canvasInfo.dpr;
     canvasRef.current.height = canvasInfo.height * canvasInfo.dpr;
+
+    if (!stateRef.current.camera) {
+      stateRef.current.camera = new Camera(canvasInfo.width, canvasInfo.height);
+    }
     
     if (gl) {
       // Handle gl context resizing here if needed
@@ -395,11 +402,34 @@ function App() {
           console.log(`Selected shape ${shapeIds[0]}`);
         }
       }
+
+      if (e.key === 'f') {
+        const camera = stateRef.current.camera;
+        if (camera) {
+          const nodes = stateRef.current.shapeManager.getAllShapes().map(s => ({
+            position: s.position,
+            width: s.size.width,
+            height: s.size.height,
+          }));
+          camera.fitToView(nodes);
+        }
+      }
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const camera = stateRef.current.camera;
+      if (!camera) return;
+
+      const zoomFactor = 1.1;
+      const newZoom = e.deltaY < 0 ? camera.zoom * zoomFactor : camera.zoom / zoomFactor;
+      
+      camera.setZoom(newZoom);
     };
     
     const onPointerMove = (e: PointerEvent) => {
-      const canvasInfo = stateRef.current.canvasInfo;
-      if (!canvasInfo) {
+      const { camera, canvasInfo } = stateRef.current;
+      if (!camera || !canvasInfo) {
         return;
       }
       const canvasRect = canvasEl.getBoundingClientRect();
@@ -410,18 +440,28 @@ function App() {
 
       // Handle dragging
       if (stateRef.current.draggingShapeId) {
-        const deltaX = e.clientX - stateRef.current.dragStartPos.x;
-        const deltaY = e.clientY - stateRef.current.dragStartPos.y;
+        const dragStartWorldPos = camera.screenToWorld(stateRef.current.dragStartPos.x, stateRef.current.dragStartPos.y);
+        const currentWorldPos = camera.screenToWorld(e.clientX, e.clientY);
+
+        const deltaX = currentWorldPos.x - dragStartWorldPos.x;
+        const deltaY = currentWorldPos.y - dragStartWorldPos.y;
 
         // Update all shapes in the dragging group
         for (const [shapeId, originalPos] of stateRef.current.draggingGroupShapes.entries()) {
           const newPosition = {
-            x: originalPos.x - deltaX * canvasInfo.dpr,
-            y: originalPos.y + deltaY * canvasInfo.dpr,
+            x: originalPos.x + deltaX,
+            y: originalPos.y + deltaY,
           };
 
           stateRef.current.shapeManager.setShapePosition(shapeId, newPosition);
         }
+      } else if (stateRef.current.isPanning) {
+        const lastWorldPos = camera.screenToWorld(stateRef.current.dragStartPos.x, stateRef.current.dragStartPos.y);
+        const currentWorldPos = camera.screenToWorld(e.clientX, e.clientY);
+        const dx = currentWorldPos.x - lastWorldPos.x;
+        const dy = currentWorldPos.y - lastWorldPos.y;
+
+        camera.setCenter(camera.position.x - dx, camera.position.y - dy);
       } else {
         // Handle hover detection when not dragging
         const mousePos = {
@@ -429,10 +469,8 @@ function App() {
           y: e.clientY - canvasRect.top,
         };
 
-        const hoveredShapeId = stateRef.current.shapeManager.getShapeAtPosition(
-          mousePos,
-          canvasInfo
-        );
+        const worldPos = camera.screenToWorld(mousePos.x, mousePos.y);
+        const hoveredShapeId = stateRef.current.shapeManager.getShapeAtPosition(worldPos);
 
         const currentParentId = stateRef.current.hoveredShapeId;
         const currentChildId = stateRef.current.hoverShapeId;
@@ -469,7 +507,8 @@ function App() {
             const hoverShapeData = createHoverShape(
               originalShape,
               0,
-              canvasInfo
+              canvasInfo,
+              camera
             );
             const newHoverShapeId =
               stateRef.current.shapeManager.addShape(hoverShapeData);
@@ -494,8 +533,8 @@ function App() {
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      const canvasInfo = stateRef.current.canvasInfo;
-      if (!canvasInfo) {
+      const { camera, canvasInfo } = stateRef.current;
+      if (!camera || !canvasInfo) {
         return;
       }
       
@@ -505,11 +544,8 @@ function App() {
         y: e.clientY - canvasRect.top,
       };
 
-      const clickedShapeId = stateRef.current.shapeManager.getShapeAtPosition(mousePos, {
-        width: canvasInfo.width,
-        height: canvasInfo.height,
-        dpr: canvasInfo.dpr,
-      });
+      const worldPos = camera.screenToWorld(mousePos.x, mousePos.y);
+      const clickedShapeId = stateRef.current.shapeManager.getShapeAtPosition(worldPos);
       
       if (clickedShapeId === 'hover_shape' && stateRef.current.hoveredShapeId) {
         alert(`the child shape of shape[${stateRef.current.hoveredShapeId}] is clicked`);
@@ -521,7 +557,6 @@ function App() {
         if (clickedShape) {
           stateRef.current.draggingShapeId = clickedShapeId;
           stateRef.current.dragStartPos = { x: e.clientX, y: e.clientY };
-          stateRef.current.dragStartShapePos = { ...clickedShape.position };
           
           // Find all shapes with the same z-index for group dragging
           stateRef.current.draggingGroupShapes.clear();
@@ -534,12 +569,17 @@ function App() {
             }
           }
         }
+      } else {
+        // Start panning
+        stateRef.current.isPanning = true;
+        stateRef.current.dragStartPos = { x: e.clientX, y: e.clientY };
       }
     };
 
     const onPointerUp = () => {
       stateRef.current.draggingShapeId = null;
       stateRef.current.draggingGroupShapes.clear();
+      stateRef.current.isPanning = false;
     };
 
     const onPointerLeave = () => {
@@ -559,6 +599,7 @@ function App() {
     canvasEl.addEventListener('pointerdown', onPointerDown);
     canvasEl.addEventListener('pointerup', onPointerUp);
     canvasEl.addEventListener('pointerleave', onPointerLeave);
+    canvasEl.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('keydown', onKeyDown);
 
     let renderer: MultiPassRenderer | null = null;
@@ -609,40 +650,49 @@ function App() {
       
       const canvasInfo = stateRef.current.canvasInfo;
       const controls = stateRef.current.controls;
+      const cameraZoom = stateRef.current.camera?.zoom ?? 1;
+
+      // Create a unified object for shared glass effect uniforms
+      const glassUniforms = {
+        u_refFactor: controls.refFactor,
+        u_refDispersion: controls.refDispersion,
+        u_refFresnelHardness: controls.refFresnelHardness / 100,
+        u_refFresnelFactor: controls.refFresnelFactor / 100,
+        u_glareHardness: controls.glareHardness / 100,
+        u_glareConvergence: controls.glareConvergence / 100,
+        u_glareOppositeFactor: controls.glareOppositeFactor / 100,
+        u_glareFactor: controls.glareFactor / 100,
+        u_glareAngle: (controls.glareAngle * Math.PI) / 180,
+        STEP: controls.step,
+        // Scaled uniforms
+        u_mergeRatio: controls.mergeRatio * cameraZoom,
+        u_refThickness: controls.refThickness * cameraZoom,
+        u_refFresnelRange: controls.refFresnelRange * cameraZoom,
+        u_glareRange: controls.glareRange * cameraZoom,
+      };
 
       if (oitSystem && gl) {
         // --- OIT Render Path ---
         // The old background texture logic has issues, let's create a placeholder
         const bgTexture = createEmptyTexture(gl); // Simplified for now
 
-        // Prepare global uniforms
+        // Prepare global uniforms by merging shared glass uniforms
         const globalUniforms = {
+          ...glassUniforms,
           u_resolution: [canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr],
           u_dpr: canvasInfo.dpr,
-          u_refFactor: controls.refFactor,
-          u_refDispersion: controls.refDispersion,
-          u_refThickness: controls.refThickness,
-          u_tint: [
-            controls.tint.r / 255,
-            controls.tint.g / 255,
-            controls.tint.b / 255,
-            controls.tint.a,
-          ],
-          u_refFresnelRange: controls.refFresnelRange,
-          u_refFresnelHardness: controls.refFresnelHardness / 100,
-          u_refFresnelFactor: controls.refFresnelFactor / 100,
-          u_glareRange: controls.glareRange,
-          u_glareHardness: controls.glareHardness / 100,
-          u_glareConvergence: controls.glareConvergence / 100,
-          u_glareOppositeFactor: controls.glareOppositeFactor / 100,
-          u_glareFactor: controls.glareFactor / 100,
-          u_glareAngle: (controls.glareAngle * Math.PI) / 180,
-          u_mergeRatio: controls.mergeRatio,
-          STEP: controls.step,
         };
         
         // Render with OIT
-        oitSystem.render(stateRef.current.shapeManager, bgTexture, globalUniforms);
+        if (stateRef.current.camera) {
+          oitSystem.render(
+            stateRef.current.shapeManager,
+            bgTexture,
+            globalUniforms,
+            stateRef.current.camera,
+            canvasInfo
+          );
+        }
 
       } else if (renderer) {
         // --- Fallback Multi-Pass Render Path with Dithering ---
@@ -663,9 +713,9 @@ function App() {
             ? stateRef.current.shapeManager.getShape(stateRef.current.hoveredShapeId)
             : null;
           
-          if (originalShape) {
+          if (originalShape && stateRef.current.camera) {
             const currentCanvasInfo = stateRef.current.canvasInfo;
-            const hoverShapeData = createHoverShape(originalShape, progress, currentCanvasInfo);
+            const hoverShapeData = createHoverShape(originalShape, progress, currentCanvasInfo, stateRef.current.camera);
             stateRef.current.shapeManager.updateShape(stateRef.current.hoverShapeId, hoverShapeData);
           }
           
@@ -815,19 +865,21 @@ function App() {
                 ? stateRef.current.bgTextureRatio
                 : undefined,
             u_bgTextureReady: stateRef.current.bgTextureReady ? 1 : 0,
-            u_shadowExpand: controls.shadowExpand,
+            u_shadowExpand: controls.shadowExpand * (stateRef.current.camera?.zoom ?? 1),
             u_shadowFactor: controls.shadowFactor / 100,
-            u_shadowPosition: [-controls.shadowPosition.x, -controls.shadowPosition.y],
+            u_shadowPosition: [-controls.shadowPosition.x, -controls.shadowPosition.y].map(
+              (v) => v * (stateRef.current.camera?.zoom ?? 1)
+            ),
             // For background shadows, we still need all shapes
             u_shapeCount: stateRef.current.shapeManager.getVisibleShapes().length,
-            u_shapePositions: stateRef.current.shapeManager.getShapeDataForShader().positions,
-            u_shapeSizes: stateRef.current.shapeManager.getShapeDataForShader().sizes,
-            u_shapeRadii: stateRef.current.shapeManager.getShapeDataForShader().radii,
-            u_shapeRoundnesses: stateRef.current.shapeManager.getShapeDataForShader().roundnesses,
-            u_shapeVisibilities: stateRef.current.shapeManager.getShapeDataForShader().visibilities,
-            u_shapeZIndices: stateRef.current.shapeManager.getShapeDataForShader().zIndices,
-            u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader().isHoverShape,
-            u_mergeRatio: controls.mergeRatio,
+            u_shapePositions: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).positions,
+            u_shapeSizes: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).sizes,
+            u_shapeRadii: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).radii,
+            u_shapeRoundnesses: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).roundnesses,
+            u_shapeVisibilities: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).visibilities,
+            u_shapeZIndices: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).zIndices,
+            u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).isHoverShape,
+            u_mergeRatio: controls.mergeRatio * cameraZoom,
           },
         };
 
@@ -850,9 +902,22 @@ function App() {
           for (let j = 0; j < maxShapes; j++) {
               if (j < batch.shapes.length) {
                   const shape = batch.shapes[j];
-                  batchShapeData.positions.push(shape.position.x, shape.position.y);
-                  batchShapeData.sizes.push(shape.size.width, shape.size.height);
-                  batchShapeData.radii.push(shape.radius);
+                  if (stateRef.current.camera) {
+                    const camera = stateRef.current.camera;
+                    const screenPos = camera.worldToScreen(shape.position.x, shape.position.y);
+                    const shaderPosX = -(screenPos.x - (canvasInfo.width / 2)) * canvasInfo.dpr;
+                    const shaderPosY = (screenPos.y - (canvasInfo.height / 2)) * canvasInfo.dpr;
+                    const screenSizeWidth = shape.size.width * camera.zoom * canvasInfo.dpr;
+                    const screenSizeHeight = shape.size.height * camera.zoom * canvasInfo.dpr;
+                    batchShapeData.positions.push(shaderPosX, shaderPosY);
+                    batchShapeData.sizes.push(screenSizeWidth, screenSizeHeight);
+                    batchShapeData.radii.push(shape.radius * camera.zoom * canvasInfo.dpr);
+                  } else {
+                    batchShapeData.positions.push(shape.position.x, shape.position.y);
+                    batchShapeData.sizes.push(shape.size.width, shape.size.height);
+                    batchShapeData.radii.push(shape.radius);
+                  }
+                  
                   batchShapeData.roundnesses.push(shape.roundness);
                   batchShapeData.visibilities.push(shape.visible ? 1.0 : 0.0);
                   batchShapeData.zIndices.push(shape.zIndex);
@@ -872,6 +937,7 @@ function App() {
           }
           
           passUniforms[passName] = {
+            // Group shape data for blob merging
             u_shapeCount: batch.shapes.length,
             u_shapePositions: batchShapeData.positions,
             u_shapeSizes: batchShapeData.sizes,
@@ -886,20 +952,8 @@ function App() {
               batch.tint[2] / 255,
               controls.shapeAlpha, // Use global alpha control
             ],
-            u_mergeRatio: controls.mergeRatio,
-            // Glass effect properties
-            u_refThickness: controls.refThickness,
-            u_refFactor: controls.refFactor,
-            u_refDispersion: controls.refDispersion,
-            u_refFresnelRange: controls.refFresnelRange,
-            u_refFresnelHardness: controls.refFresnelHardness / 100,
-            u_refFresnelFactor: controls.refFresnelFactor / 100,
-            u_glareRange: controls.glareRange,
-            u_glareHardness: controls.glareHardness / 100,
-            u_glareConvergence: controls.glareConvergence / 100,
-            u_glareOppositeFactor: controls.glareOppositeFactor / 100,
-            u_glareFactor: controls.glareFactor / 100,
-            STEP: controls.step,
+            // Merge shared glass uniforms (which no longer contains u_tint)
+            ...glassUniforms,
           };
         });
 
@@ -910,13 +964,13 @@ function App() {
           // Only need uniforms for the single allShapesMask pass
           passUniforms.allShapesMask = {
             u_shapeCount: currentShapes.length,
-            u_shapePositions: stateRef.current.shapeManager.getShapeDataForShader().positions,
-            u_shapeSizes: stateRef.current.shapeManager.getShapeDataForShader().sizes,
-            u_shapeRadii: stateRef.current.shapeManager.getShapeDataForShader().radii,
-            u_shapeRoundnesses: stateRef.current.shapeManager.getShapeDataForShader().roundnesses,
-            u_shapeVisibilities: stateRef.current.shapeManager.getShapeDataForShader().visibilities,
-            u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader().isHoverShape,
-            u_mergeRatio: controls.mergeRatio,
+            u_shapePositions: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).positions,
+            u_shapeSizes: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).sizes,
+            u_shapeRadii: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).radii,
+            u_shapeRoundnesses: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).roundnesses,
+            u_shapeVisibilities: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).visibilities,
+            u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).isHoverShape,
+            u_mergeRatio: controls.mergeRatio * cameraZoom,
           };
         }
 

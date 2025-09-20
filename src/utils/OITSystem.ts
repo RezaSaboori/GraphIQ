@@ -4,6 +4,7 @@ import WBOITGatherFragment from '../shaders/wboit-gather.glsl?raw';
 import PassthroughVertex from '../shaders/vertex.glsl?raw'; // Simple quad vertex shader
 import WBOITCompositeFragment from '../shaders/wboit-composite.glsl?raw';
 import { ShapeManager } from './ShapeManager';
+import { Camera } from './Camera';
 
 export class OITSystem {
   private gl: WebGLRenderingContext | WebGL2RenderingContext;
@@ -83,7 +84,13 @@ export class OITSystem {
     this.compositePass = new RenderPass(gl, { vertex: PassthroughVertex, fragment: WBOITCompositeFragment }, true);
   }
   
-  public render(shapeManager: ShapeManager, bgTexture: WebGLTexture, globalUniforms: Record<string, any>): void {
+  public render(
+    shapeManager: ShapeManager,
+    bgTexture: WebGLTexture,
+    globalUniforms: Record<string, any>,
+    camera: Camera,
+    canvasInfo: { width: number; height: number; dpr: number }
+  ): void {
     const gl = this.gl;
     if (!this.drawBuffersExt || !this.oitFBO || !this.gatherPass || !this.compositePass) return;
 
@@ -106,8 +113,19 @@ export class OITSystem {
     // Disable depth test for this pass, z-ordering is handled by blending
     gl.disable(gl.DEPTH_TEST);
 
-    const shapeData = shapeManager.getShapeDataForTexture();
-    if (shapeData.count === 0) return;
+    const shapeData = shapeManager.getShapeDataForTexture(camera, canvasInfo);
+    if (shapeData.count === 0) {
+      // Still need to run composite pass to draw the background
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, this.screenWidth, this.screenHeight);
+      gl.disable(gl.BLEND);
+      this.compositePass.render({
+        u_accumTexture: this.accumTexture,
+        u_revealageTexture: this.revealageTexture,
+        u_bgTexture: bgTexture,
+      });
+      return;
+    }
 
     // Update shape data texture
     if (!this.shapeTexture || this.shapeTextureWidth !== shapeData.width || this.shapeTextureHeight !== shapeData.height) {

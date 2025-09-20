@@ -1,3 +1,5 @@
+import { Camera } from './Camera';
+
 export interface Shape {
   id: string;
   position: { x: number; y: number };
@@ -216,34 +218,23 @@ export class ShapeManager {
 
   // Get shape at a specific screen position (for click detection)
   public getShapeAtPosition(
-    mousePos: { x: number; y: number },
-    canvasInfo: { width: number; height: number; dpr: number },
+    worldPos: { x: number; y: number }
   ): string | null {
     const sortedShapes = this.getSortedShapes();
-    const dpr = canvasInfo.dpr || 1;
-
-    // Convert mouse position to physical pixels for comparison
-    const mousePhysX = mousePos.x * dpr;
-    const mousePhysY = mousePos.y * dpr;
 
     // Iterate from top to bottom (highest zIndex first)
     for (let i = sortedShapes.length - 1; i >= 0; i--) {
       const shape = sortedShapes[i];
       if (!shape.visible) continue;
 
-      // Center of the canvas in physical pixels
-      const centerX = (canvasInfo.width * dpr) / 2;
-      const centerY = (canvasInfo.height * dpr) / 2;
-
-      // Shape's position is relative to the center, convert it to top-left physical coordinates
-      const shapeX = centerX - shape.position.x - shape.size.width / 2;
-      const shapeY = centerY + shape.position.y - shape.size.height / 2;
+      const halfWidth = shape.size.width / 2;
+      const halfHeight = shape.size.height / 2;
 
       if (
-        mousePhysX >= shapeX &&
-        mousePhysX <= shapeX + shape.size.width &&
-        mousePhysY >= shapeY &&
-        mousePhysY <= shapeY + shape.size.height
+        worldPos.x >= shape.position.x - halfWidth &&
+        worldPos.x <= shape.position.x + halfWidth &&
+        worldPos.y >= shape.position.y - halfHeight &&
+        worldPos.y <= shape.position.y + halfHeight
       ) {
         return shape.id; // Return the topmost shape found
       }
@@ -257,7 +248,10 @@ export class ShapeManager {
   }
 
   // Get shape data for shader uniforms
-  getShapeDataForShader(): {
+  getShapeDataForShader(
+    camera: Camera | null,
+    canvasInfo: { width: number; height: number; dpr: number }
+  ): {
     positions: number[];
     sizes: number[];
     radii: number[];
@@ -282,9 +276,23 @@ export class ShapeManager {
     for (let i = 0; i < maxShapes; i++) {
       if (i < shapes.length) {
         const shape = shapes[i];
-        positions.push(shape.position.x, shape.position.y);
-        sizes.push(shape.size.width, shape.size.height);
-        radii.push(shape.radius);
+
+        if (camera) {
+          const screenPos = camera.worldToScreen(shape.position.x, shape.position.y);
+          const shaderPosX = -(screenPos.x - (canvasInfo.width / 2)) * canvasInfo.dpr;
+          const shaderPosY = (screenPos.y - (canvasInfo.height / 2)) * canvasInfo.dpr;
+
+          const screenSizeWidth = shape.size.width * camera.zoom * canvasInfo.dpr;
+          const screenSizeHeight = shape.size.height * camera.zoom * canvasInfo.dpr;
+
+          positions.push(shaderPosX, shaderPosY);
+          sizes.push(screenSizeWidth, screenSizeHeight);
+        } else {
+          positions.push(shape.position.x, shape.position.y);
+          sizes.push(shape.size.width, shape.size.height);
+        }
+
+        radii.push(shape.radius * (camera?.zoom ?? 1));
         roundnesses.push(shape.roundness);
         visibilities.push(shape.visible ? 1.0 : 0.0);
         zIndices.push(shape.zIndex);
@@ -321,7 +329,10 @@ export class ShapeManager {
     });
   }
 
-  getShapeDataForTexture(): {
+  getShapeDataForTexture(
+    camera: Camera,
+    canvasInfo: { width: number; height: number; dpr: number }
+  ): {
     data: Float32Array;
     width: number;
     height: number;
@@ -345,13 +356,31 @@ export class ShapeManager {
       const offset = i * floatsPerShape;
 
       // Pixel 1
-      data[offset + 0] = shape.position.x;
-      data[offset + 1] = shape.position.y;
-      data[offset + 2] = shape.size.width;
-      data[offset + 3] = shape.size.height;
+      if (camera) {
+        const screenPos = camera.worldToScreen(shape.position.x, shape.position.y);
+        const shaderPosX = -(screenPos.x - (canvasInfo.width / 2)) * canvasInfo.dpr;
+        const shaderPosY = (screenPos.y - (canvasInfo.height / 2)) * canvasInfo.dpr;
+        const screenSizeWidth = shape.size.width * camera.zoom * canvasInfo.dpr;
+        const screenSizeHeight = shape.size.height * camera.zoom * canvasInfo.dpr;
+
+        data[offset + 0] = shaderPosX;
+        data[offset + 1] = shaderPosY;
+        data[offset + 2] = screenSizeWidth;
+        data[offset + 3] = screenSizeHeight;
+      } else {
+        data[offset + 0] = shape.position.x;
+        data[offset + 1] = shape.position.y;
+        data[offset + 2] = shape.size.width;
+        data[offset + 3] = shape.size.height;
+      }
+
 
       // Pixel 2
-      data[offset + 4] = shape.radius;
+      if (camera) {
+        data[offset + 4] = shape.radius * camera.zoom * canvasInfo.dpr;
+      } else {
+        data[offset + 4] = shape.radius;
+      }
       data[offset + 5] = shape.roundness;
       data[offset + 6] = shape.zIndex;
       data[offset + 7] = shape.id === 'hover_shape' ? 1.0 : 0.0;
