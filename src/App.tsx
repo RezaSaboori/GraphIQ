@@ -26,6 +26,7 @@ import FragmentMainShader from './shaders/fragment-main.glsl?raw';
 import { useLevaControls } from './Controls';
 import { ShapeManager, type Shape } from './utils/ShapeManager';
 import { LiquidShape } from './elements/LiquidShape';
+import PerformanceCard from './components/PerformanceCard';
 
 // Import ColorValue type for per-shape tints
 type ColorValue = {
@@ -144,7 +145,6 @@ function App() {
     dragStartPos: { x: number; y: number };
     dragStartShapePos: { x: number; y: number };
     draggingGroupShapes: Map<string, { x: number; y: number }>; // Store original positions of all shapes in dragging group
-    lastShapesState: string | null; // Track when shapes change for rebuilding passes
     hoveredShapeId: string | null; // Track which shape is being hovered
     hoverShapeId: string | null; // ID of the temporary hover shape
     hoverAnimationStart: number | null; // Animation start timestamp
@@ -161,6 +161,7 @@ function App() {
       ditherStrength: number;
       ditherType: number;
     }
+    lastBatchCount: number | null;
   }>({
     renderRaf: null,
     glStates: null,
@@ -188,7 +189,6 @@ function App() {
     dragStartPos: { x: 0, y: 0 },
     dragStartShapePos: { x: 0, y: 0 },
     draggingGroupShapes: new Map(),
-    lastShapesState: null,
     hoveredShapeId: null,
     hoverShapeId: null,
     hoverAnimationStart: null,
@@ -204,7 +204,8 @@ function App() {
       effectComplexityThreshold: 0.4, // Less aggressive alpha testing
       ditherStrength: 0.3, // Lower default dither strength
       ditherType: 2, // Default to blue noise for better quality
-    }
+    },
+    lastBatchCount: null,
   });
   stateRef.current.canvasInfo = canvasInfo;
   stateRef.current.controls = controls;
@@ -280,7 +281,7 @@ function App() {
         stateRef.current.shapeManager = new ShapeManager(shapes);
         stateRef.current.shapeManager.setShapeDefinitions(defs);
         // Force renderer to rebuild on next frame
-        stateRef.current.lastShapesState = null;
+        stateRef.current.lastBatchCount = -1; // Force rebuild
       } catch (err) {
         console.error('Failed to load dataset shapes.json', err);
       }
@@ -562,7 +563,6 @@ function App() {
       }
       
       renderer = new MultiPassRenderer(canvasEl, initialPasses);
-      stateRef.current.lastShapesState = stateRef.current.shapeManager.serialize();
     }
     
     let raf: number | null = null;
@@ -646,41 +646,38 @@ function App() {
           }
         }
 
-        // Check if shapes have changed and rebuild passes if needed
-        const currentShapesState = stateRef.current.shapeManager.serialize();
-        // The batching logic requires rebuilding passes differently.
-        // For now, we'll just pass uniforms. A full integration would
-        // dynamically create passes based on batches.
-        if (currentShapesState !== stateRef.current.lastShapesState) {
-          const batchedData = stateRef.current.shapeManager.getBatchedShapeData(controls.maxShapesPerPass);
-          const newPasses: any[] = [
-            { name: 'bgPass', shader: { vertex: VertexShader, fragment: FragmentBgShader } }
-          ];
+        const batchedData = stateRef.current.shapeManager.getBatchedShapeData(controls.maxShapesPerPass);
 
-          let previousLayerName = 'bgPass';
-          batchedData.batches.forEach((batch, index) => {
-            const passName = `alphaBatch_${index}`;
-            const isLastBatch = index === batchedData.batches.length - 1;
-            newPasses.push({
-              name: passName,
-              shader: { vertex: VertexShader, fragment: FragmentMainShader },
-              inputs: { u_bg: 'bgPass', u_previousLayer: previousLayerName },
-              outputToScreen: isLastBatch,
+        // Only rebuild render passes if the number of batches has changed
+        if (batchedData.batches.length !== stateRef.current.lastBatchCount) {
+            const newPasses: any[] = [
+                { name: 'bgPass', shader: { vertex: VertexShader, fragment: FragmentBgShader } }
+            ];
+
+            let previousLayerName = 'bgPass';
+            batchedData.batches.forEach((_, index) => {
+                const passName = `alphaBatch_${index}`;
+                const isLastBatch = index === batchedData.batches.length - 1;
+                newPasses.push({
+                    name: passName,
+                    shader: { vertex: VertexShader, fragment: FragmentMainShader },
+                    inputs: { u_bg: 'bgPass', u_previousLayer: previousLayerName },
+                    outputToScreen: isLastBatch,
+                });
+                previousLayerName = passName;
             });
-            previousLayerName = passName;
-          });
 
-          if (batchedData.batches.length === 0) {
-            newPasses.push({
-              name: 'passthroughPass',
-              shader: { vertex: VertexShader, fragment: FragmentBgShader, },
-              inputs: { u_prevPassTexture: 'bgPass', },
-              outputToScreen: true,
-            });
-          }
+            if (batchedData.batches.length === 0) {
+                newPasses.push({
+                    name: 'passthroughPass',
+                    shader: { vertex: VertexShader, fragment: FragmentBgShader, },
+                    inputs: { u_prevPassTexture: 'bgPass', },
+                    outputToScreen: true,
+                });
+            }
 
-          renderer.rebuildPasses(newPasses);
-          stateRef.current.lastShapesState = currentShapesState;
+            renderer.rebuildPasses(newPasses);
+            stateRef.current.lastBatchCount = batchedData.batches.length;
         }
 
         const textureUrl = stateRef.current.bgTextureUrl;
@@ -805,7 +802,6 @@ function App() {
           },
         };
 
-        const batchedData = stateRef.current.shapeManager.getBatchedShapeData(controls.maxShapesPerPass);
         batchedData.batches.forEach((batch, index) => {
           const passName = `alphaBatch_${index}`;
 
@@ -1048,6 +1044,7 @@ function App() {
           } as CSSProperties
         }
       />
+      <PerformanceCard />
     </>
   );
 }

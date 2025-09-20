@@ -445,7 +445,7 @@ void main() {
     float merged = mainSDF(gl_FragCoord.xy);
     vec4 outColor;
     
-    if (merged < 0.005) {
+    if (merged < 0.002) {
         // Calculate all effect factors first
         float nmerged = -1.0 * (merged * u_resolution1x.y);
         float x_R_ratio = 1.0 - nmerged / u_refThickness;
@@ -507,7 +507,7 @@ void main() {
             
             // DISTANCE-BASED DITHERING: Only dither near edges where SDF value is small
             float distanceToEdge = abs(merged);
-            float edgeThreshold = 0.002; // Pixels close to shape edge
+            float edgeThreshold = 0.0002; // Pixels close to shape edge (narrower)
             
             if (distanceToEdge < edgeThreshold) {
                 // Near edge: use dithering for complex effects
@@ -540,7 +540,7 @@ void main() {
             
             // Only apply dithering if alpha is very low AND we're near edges
             float distanceToEdge = abs(merged);
-            float edgeThreshold = 0.001;
+            float edgeThreshold = 0.0001;
             
             if (tintOnlyAlpha < 0.3 && distanceToEdge < edgeThreshold && u_enableSelectiveAlpha > 0.5) {
                 float ditherThreshold = getSelectiveDitherThreshold(

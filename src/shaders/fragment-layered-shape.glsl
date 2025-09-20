@@ -290,7 +290,7 @@ void main() {
   vec4 outColor;
   
   if (STEP <= 9) {
-    if (shapeDist < 0.005) {
+    if (shapeDist < 0.002) {
       float nShapeDist = -1.0 * (shapeDist * u_resolution1x.y);
 
       // Calculate refraction edge factor
@@ -418,9 +418,9 @@ void main() {
       
       // Smooth transition to background only at edges
       if (u_isFirstLayer) {
-        outColor = mix(outColor, texture(u_bg, v_uv), smoothstep(-0.0005, 0.0005, shapeDist));
+        outColor = mix(outColor, texture(u_bg, v_uv), smoothstep(-0.0001, 0.0001, shapeDist));
       } else {
-        outColor = mix(outColor, texture(u_previousLayer, v_uv), smoothstep(-0.0005, 0.0005, shapeDist));
+        outColor = mix(outColor, texture(u_previousLayer, v_uv), smoothstep(-0.0001, 0.0001, shapeDist));
       }
     } else {
       // Outside the shape - pass through the previous layer or background

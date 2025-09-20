@@ -114,7 +114,7 @@ void main() {
   vec2 res1x = u_resolution.xy / u_dpr;
   float merged = mainSDF(gl_FragCoord.xy);
 
-  if (merged < 0.005) {
+  if (merged < 0.002) {
     float nmerged = -merged * res1x.y;
     float x_R_ratio = 1.0 - nmerged / u_refThickness;
     float thetaI = asin(pow(x_R_ratio, 2.0));
@@ -132,7 +132,7 @@ void main() {
   } else {
     fragColor = texture(u_bg, v_uv);
   }
-  fragColor = mix(fragColor, texture(u_bg, v_uv), smoothstep(-0.0005, 0.0005, merged));
+  fragColor = mix(fragColor, texture(u_bg, v_uv), smoothstep(-0.0001, 0.0001, merged));
 }
 
 
