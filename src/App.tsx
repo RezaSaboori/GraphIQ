@@ -29,12 +29,7 @@ import { LiquidShape } from './elements/LiquidShape';
 import PerformanceCard from './components/PerformanceCard';
 
 // Import ColorValue type for per-shape tints
-type ColorValue = {
-  r: number;
-  g: number;
-  b: number;
-  a: number;
-};
+type ColorValue = [number, number, number]; // [r, g, b] array format
 
 // HELPER REMOVED: buildLayeredRenderPasses is now obsolete.
 
@@ -828,8 +823,8 @@ function App() {
                   batchShapeData.visibilities.push(shape.visible ? 1.0 : 0.0);
                   batchShapeData.zIndices.push(shape.zIndex);
                   batchShapeData.isHoverShape.push(shape.id === 'hover_shape' ? 1.0 : 0.0);
-                  const tint = shape.tint || {r:255,g:255,b:255,a:1};
-                  batchShapeData.tints.push(tint.r/255, tint.g/255, tint.b/255, tint.a);
+                  const tint = shape.tint || [255, 255, 255];
+                  batchShapeData.tints.push(tint[0]/255, tint[1]/255, tint[2]/255, controls.shapeAlpha);
             } else {
                   batchShapeData.positions.push(0, 0);
                   batchShapeData.sizes.push(0, 0);
@@ -852,9 +847,9 @@ function App() {
             u_shapeZIndices: batchShapeData.zIndices,
             u_isHoverShape: batchShapeData.isHoverShape,
             u_tint: [
-              batch.tint.r / 255,
-              batch.tint.g / 255,
-              batch.tint.b / 255,
+              batch.tint[0] / 255,
+              batch.tint[1] / 255,
+              batch.tint[2] / 255,
               controls.shapeAlpha, // Use global alpha control
             ],
             u_mergeRatio: controls.mergeRatio,

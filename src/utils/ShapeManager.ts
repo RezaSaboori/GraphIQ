@@ -7,7 +7,7 @@ export interface Shape {
   visible: boolean;
   draggable: boolean;
   zIndex: number;
-  tint: { r: number; g: number; b: number; a: number };
+  tint: [number, number, number]; // [r, g, b] array format
 }
 
 export interface ShapeManagerState {
@@ -47,7 +47,7 @@ export class ShapeManager {
       visible: shapeData.visible !== false,
       draggable: shapeData.draggable !== false,
       zIndex: shapeData.zIndex !== undefined ? shapeData.zIndex : 0,
-      tint: shapeData.tint || { r: 255, g: 255, b: 255, a: 1 },
+      tint: shapeData.tint || [255, 255, 255],
     };
     
     this.state.shapes.set(id, shape);
@@ -162,7 +162,7 @@ export class ShapeManager {
           shapes: Shape[];
           zIndex: number;
           avgAlpha: number;
-          tint: { r: number; g: number; b: number; a: number };
+          tint: [number, number, number]; // [r, g, b] array format
       }>;
   } {
       const visibleShapes = this.getVisibleShapes();
@@ -179,7 +179,7 @@ export class ShapeManager {
           groups.get(key)!.push(shape);
       });
       
-      const result: Array<{shapes: Shape[]; zIndex: number; avgAlpha: number; tint: { r: number; g: number; b: number; a: number }}> = [];
+      const result: Array<{shapes: Shape[]; zIndex: number; avgAlpha: number; tint: [number, number, number]}> = [];
       
       // Split large groups into multiple batches
       for (const shapes of groups.values()) {
@@ -188,7 +188,7 @@ export class ShapeManager {
           // All shapes in this group have the same zIndex and tint
           const zIndex = shapes[0].zIndex;
           const tint = shapes[0].tint;
-          const avgAlpha = tint.a; // Since all tints are the same, avg is just the value
+          const avgAlpha = 1.0; // Alpha is now controlled by controls config
           
           // Split into batches of maxShapesPerBatch
           for (let i = 0; i < shapes.length; i += maxShapesPerBatch) {
@@ -204,7 +204,7 @@ export class ShapeManager {
   }
 
   // New method to set shape definitions
-  public setShapeDefinitions(definitions: Array<{ id: string; tint: { r: number; g: number; b: number; a: number } }>) {
+  public setShapeDefinitions(definitions: Array<{ id: string; tint: [number, number, number] }>) {
       const defsById = new Map(definitions.map(d => [d.id, d]));
       for (const shape of this.state.shapes.values()) {
           const def = defsById.get(shape.id);
@@ -336,7 +336,7 @@ export class ShapeManager {
     // Use 3 pixels (RGBA = 4 floats) per shape
     // Pixel 1: (pos.x, pos.y, size.x, size.y)
     // Pixel 2: (radius, roundness, zIndex, isHoverShape)
-    // Pixel 3: (tint.r, tint.g, tint.b, tint.a)
+    // Pixel 3: (tint[0], tint[1], tint[2], alpha)
     const floatsPerShape = 12;
     const data = new Float32Array(shapeCount * floatsPerShape);
 
@@ -357,10 +357,10 @@ export class ShapeManager {
       data[offset + 7] = shape.id === 'hover_shape' ? 1.0 : 0.0;
 
       // Pixel 3
-      data[offset + 8] = shape.tint.r / 255;
-      data[offset + 9] = shape.tint.g / 255;
-      data[offset + 10] = shape.tint.b / 255;
-      data[offset + 11] = shape.tint.a;
+      data[offset + 8] = shape.tint[0] / 255;
+      data[offset + 9] = shape.tint[1] / 255;
+      data[offset + 10] = shape.tint[2] / 255;
+      data[offset + 11] = 1.0; // Alpha will be controlled by controls config
     }
 
     // For simplicity, using a 1D texture layout for now.

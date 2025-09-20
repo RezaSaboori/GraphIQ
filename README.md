@@ -40,14 +40,14 @@ Each item uses this schema:
     "position": { "x": 100, "y": 0 },
     "size": { "height": 200 },
     "zIndex": 0,
-    "tint": { "r": 255, "g": 0, "b": 0, "a": 0.6 }
+    "tint": [255, 0, 0]
   }
 ]
 ```
 Notes:
 - **width**: comes from the live control `shapeWidth` (same width for all shapes). Heights and positions come from the dataset.
 - **DPR scaling**: `position.x`, `position.y`, and `size.height` are multiplied by device pixel ratio at load to keep visuals crisp on HiDPI screens.
-- **tint**: `r/g/b` are `0‑255`, `a` is `0‑1`.
+- **tint**: `[r, g, b]` array format where `r/g/b` are `0‑255`. Alpha is controlled by the global `shapeAlpha` control.
 - **zIndex**: shapes with the same value merge into a single "blob" layer and drag together.
 
 ### Controls & interactions
