@@ -29,6 +29,8 @@ import { LiquidShape } from './elements/LiquidShape';
 import PerformanceCard from './components/PerformanceCard';
 import { Camera } from './utils/Camera';
 
+const PAN_SENSITIVITY = 0.7; // Slower is < 1, faster is > 1
+
 // Import ColorValue type for per-shape tints
 type ColorValue = [number, number, number]; // [r, g, b] array format
 
@@ -114,6 +116,7 @@ function App() {
     } | null;
     camera: Camera | null;
     isPanning: boolean;
+    lastPointerPos: { x: number; y: number } | null;
     canvasPointerPos: { x: number; y: number };
     controls: typeof controls;
     bgTextureUrl: string | null;
@@ -158,6 +161,7 @@ function App() {
     canvasInfo,
     camera: null,
     isPanning: false,
+    lastPointerPos: null,
     canvasPointerPos: {
       x: 0,
       y: 0,
@@ -456,12 +460,17 @@ function App() {
           stateRef.current.shapeManager.setShapePosition(shapeId, newPosition);
         }
       } else if (stateRef.current.isPanning) {
-        const lastWorldPos = camera.screenToWorld(stateRef.current.dragStartPos.x, stateRef.current.dragStartPos.y);
-        const currentWorldPos = camera.screenToWorld(e.clientX, e.clientY);
-        const dx = currentWorldPos.x - lastWorldPos.x;
-        const dy = currentWorldPos.y - lastWorldPos.y;
+        if (!stateRef.current.lastPointerPos) return;
 
-        camera.setCenter(camera.position.x - dx, camera.position.y - dy);
+        const dx = e.clientX - stateRef.current.lastPointerPos.x;
+        const dy = e.clientY - stateRef.current.lastPointerPos.y;
+
+        const worldDx = (dx / camera.zoom) * PAN_SENSITIVITY;
+        const worldDy = (-dy / camera.zoom) * PAN_SENSITIVITY; // Y is inverted
+
+        camera.setCenter(camera.position.x - worldDx, camera.position.y - worldDy);
+
+        stateRef.current.lastPointerPos = { x: e.clientX, y: e.clientY };
       } else {
         // Handle hover detection when not dragging
         const mousePos = {
@@ -573,6 +582,7 @@ function App() {
         // Start panning
         stateRef.current.isPanning = true;
         stateRef.current.dragStartPos = { x: e.clientX, y: e.clientY };
+        stateRef.current.lastPointerPos = { x: e.clientX, y: e.clientY };
       }
     };
 
@@ -580,6 +590,7 @@ function App() {
       stateRef.current.draggingShapeId = null;
       stateRef.current.draggingGroupShapes.clear();
       stateRef.current.isPanning = false;
+      stateRef.current.lastPointerPos = null;
     };
 
     const onPointerLeave = () => {
