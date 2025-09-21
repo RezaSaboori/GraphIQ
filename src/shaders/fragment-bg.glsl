@@ -22,14 +22,14 @@ uniform sampler2D u_bgTexture;
 uniform float u_bgTextureRatio;
 uniform int u_bgTextureReady;
 uniform int u_showShape1;
-// Dynamic shape system - support up to 20 shapes
+// Dynamic shape system - support up to 50 shapes
 uniform float u_shapeCount;
-uniform vec2 u_shapePositions[20];
-uniform vec2 u_shapeSizes[20];
-uniform float u_shapeRadii[20];
-uniform float u_shapeRoundnesses[20];
-uniform float u_shapeVisibilities[20];
-uniform float u_isHoverShape[20]; // 1.0 for hover shapes, 0.0 for regular shapes
+uniform vec2 u_shapePositions[50];
+uniform vec2 u_shapeSizes[50];
+uniform float u_shapeRadii[50];
+uniform float u_shapeRoundnesses[50];
+uniform float u_shapeVisibilities[50];
+uniform float u_isHoverShape[50]; // 1.0 for hover shapes, 0.0 for regular shapes
 uniform float u_mergeRatio; // Controls how much shapes blend together
 
 float chessboard(vec2 uv, float size, int mode) {
@@ -105,7 +105,7 @@ float mainSDF(vec2 p) {
   float minDist = 1e20;
   int shapeCount = int(u_shapeCount);
   
-  for (int i = 0; i < 20; i++) {
+  for (int i = 0; i < 50; i++) {
     if (i >= shapeCount) break;
     if (u_shapeVisibilities[i] < 0.5) continue;
     
@@ -199,7 +199,7 @@ void main() {
   float shadow = 0.0;
   int shapeCount = int(u_shapeCount);
   
-  for (int i = 0; i < 20; i++) {
+  for (int i = 0; i < 50; i++) {
     if (i >= shapeCount) break;
     if (u_shapeVisibilities[i] < 0.5) continue;
     

@@ -141,6 +141,7 @@ function App() {
     hoverShapeId: string | null; // ID of the temporary hover shape
     hoverAnimationStart: number | null; // Animation start timestamp
     hoverAnimationDuration: number; // Animation duration in ms
+    hoverAnimationDirection: 'in' | 'out'; // 'in' for appearing, 'out' for disappearing
     hoverLeaveTimer: ReturnType<typeof setTimeout> | null; // Timer for delayed disappearance
     blueNoiseTexture: WebGLTexture | null;
     frameCount: number;
@@ -155,6 +156,14 @@ function App() {
       ditherType: number;
     }
     lastBatchCount: number | null;
+    newlyCreatedShapeId: string | null;
+    newShapeAnimationState: {
+      shapeId: string;
+      startTime: number;
+      duration: number;
+      startSize: { width: number; height: number };
+      endSize: { width: number; height: number };
+    } | null;
   }>({
     renderRaf: null,
     glStates: null,
@@ -189,6 +198,7 @@ function App() {
     hoverShapeId: null,
     hoverAnimationStart: null,
     hoverAnimationDuration: 500, // 500ms animation duration
+    hoverAnimationDirection: 'in',
     hoverLeaveTimer: null,
     blueNoiseTexture: null,
     frameCount: 0,
@@ -203,6 +213,8 @@ function App() {
       ditherType: 2, // Default to blue noise for better quality
     },
     lastBatchCount: null,
+    newlyCreatedShapeId: null,
+    newShapeAnimationState: null,
   });
   stateRef.current.canvasInfo = canvasInfo;
   stateRef.current.controls = controls;
@@ -501,27 +513,39 @@ function App() {
           hoveredShapeId !== 'hover_shape' &&
           hoveredShapeId !== currentParentId
         ) {
-          // A new hover has started on a valid parent shape
-          stateRef.current.hoveredShapeId = hoveredShapeId;
+          // If a disappearing animation is in progress, reverse it
+          if (stateRef.current.hoverShapeId && stateRef.current.hoverAnimationDirection === 'out') {
+            stateRef.current.hoveredShapeId = hoveredShapeId;
+            stateRef.current.hoverAnimationDirection = 'in';
+            
+            const elapsed = performance.now() - (stateRef.current.hoverAnimationStart ?? 0);
+            const duration = stateRef.current.hoverAnimationDuration;
+            const remaining = duration - elapsed;
+            stateRef.current.hoverAnimationStart = performance.now() - remaining;
+          } else {
+            // A new hover has started on a valid parent shape
+            stateRef.current.hoveredShapeId = hoveredShapeId;
 
-          if (currentChildId) {
-            stateRef.current.shapeManager.removeShape(currentChildId);
-          }
+            if (currentChildId) {
+              stateRef.current.shapeManager.removeShape(currentChildId);
+            }
 
-          stateRef.current.hoverAnimationStart = performance.now();
+            stateRef.current.hoverAnimationStart = performance.now();
+            stateRef.current.hoverAnimationDirection = 'in'; // Set animation direction to 'in'
 
-          const originalShape =
-            stateRef.current.shapeManager.getShape(hoveredShapeId);
-          if (originalShape) {
-            const hoverShapeData = createHoverShape(
-              originalShape,
-              0,
-              canvasInfo,
-              camera
-            );
-            const newHoverShapeId =
-              stateRef.current.shapeManager.addShape(hoverShapeData);
-            stateRef.current.hoverShapeId = newHoverShapeId;
+            const originalShape =
+              stateRef.current.shapeManager.getShape(hoveredShapeId);
+            if (originalShape) {
+              const hoverShapeData = createHoverShape(
+                originalShape,
+                0,
+                canvasInfo,
+                camera
+              );
+              const newHoverShapeId =
+                stateRef.current.shapeManager.addShape(hoverShapeData);
+              stateRef.current.hoverShapeId = newHoverShapeId;
+            }
           }
         } else if (!hoveredShapeId && currentParentId) {
           // Mouse left the parent and child, so start a timer to remove the hover shape
@@ -529,11 +553,9 @@ function App() {
             clearTimeout(stateRef.current.hoverLeaveTimer);
           }
           stateRef.current.hoverLeaveTimer = setTimeout(() => {
-            stateRef.current.hoveredShapeId = null;
-            stateRef.current.hoverAnimationStart = null;
             if (stateRef.current.hoverShapeId) {
-              stateRef.current.shapeManager.removeShape(stateRef.current.hoverShapeId);
-              stateRef.current.hoverShapeId = null;
+              stateRef.current.hoverAnimationDirection = 'out';
+              stateRef.current.hoverAnimationStart = performance.now(); // Start reverse animation
             }
             stateRef.current.hoverLeaveTimer = null;
           }, 500); // 500ms delay to disappear
@@ -557,7 +579,55 @@ function App() {
       const clickedShapeId = stateRef.current.shapeManager.getShapeAtPosition(worldPos);
       
       if (clickedShapeId === 'hover_shape' && stateRef.current.hoveredShapeId) {
-        alert(`the child shape of shape[${stateRef.current.hoveredShapeId}] is clicked`);
+        const { shapeManager, shapeDefinitions, hoverShapeId } = stateRef.current;
+        
+        const hoverShape = hoverShapeId ? shapeManager.getShape(hoverShapeId) : null;
+        if (!hoverShape) return;
+        const initialSize = { ...hoverShape.size };
+
+        const lastShape = shapeDefinitions[shapeDefinitions.length - 1];
+        const lastIdNumber = parseInt(lastShape.id.replace('shape', ''), 10);
+        const newId = `shape${lastIdNumber + 1}`;
+        const newZIndex = shapeManager.getAllShapes().reduce((maxZ, s) => Math.max(maxZ, s.zIndex), 0) + 1;
+
+        const newShapeData = {
+          id: newId,
+          position: worldPos,
+          size: initialSize,
+          tint: [255, 255, 255] as ColorValue,
+          zIndex: newZIndex,
+          draggable: true,
+          visible: true,
+        };
+        
+        shapeManager.addShape(newShapeData);
+        stateRef.current.shapeDefinitions.push({
+          ...newShapeData,
+          size: { width: controls.shapeWidth, height: 200 },
+        });
+
+        stateRef.current.draggingShapeId = newId;
+        stateRef.current.dragStartPos = { x: e.clientX, y: e.clientY };
+        stateRef.current.draggingGroupShapes.clear();
+        stateRef.current.draggingGroupShapes.set(newId, { ...newShapeData.position });
+        stateRef.current.newlyCreatedShapeId = newId;
+
+        stateRef.current.newShapeAnimationState = {
+          shapeId: newId,
+          startTime: performance.now(),
+          duration: 500,
+          startSize: initialSize,
+          endSize: { width: controls.shapeWidth, height: 200 },
+        };
+        
+        // Remove hover shape after creating a new one
+        if (stateRef.current.hoverShapeId) {
+          shapeManager.removeShape(stateRef.current.hoverShapeId);
+          stateRef.current.hoverShapeId = null;
+          stateRef.current.hoveredShapeId = null;
+          stateRef.current.hoverAnimationStart = null;
+        }
+
         return;
       }
 
@@ -587,6 +657,19 @@ function App() {
     };
 
     const onPointerUp = () => {
+      const { newlyCreatedShapeId, draggingShapeId, shapeManager, shapeDefinitions } = stateRef.current;
+      if (newlyCreatedShapeId && newlyCreatedShapeId === draggingShapeId) {
+        const newShape = shapeManager.getShape(newlyCreatedShapeId);
+        if (newShape) {
+          const shapeDef = shapeDefinitions.find(d => d.id === newlyCreatedShapeId);
+          if (shapeDef) {
+            shapeDef.position = newShape.position;
+          }
+          saveShapesToFile();
+        }
+        stateRef.current.newlyCreatedShapeId = null;
+      }
+
       stateRef.current.draggingShapeId = null;
       stateRef.current.draggingGroupShapes.clear();
       stateRef.current.isPanning = false;
@@ -604,6 +687,27 @@ function App() {
         stateRef.current.shapeManager.removeShape(stateRef.current.hoverShapeId);
         stateRef.current.hoverShapeId = null;
       }
+    };
+
+    const saveShapesToFile = () => {
+      const shapesToSave = stateRef.current.shapeDefinitions.map(def => ({
+        id: def.id,
+        position: def.position,
+        size: {
+          height: def.size.height,
+        },
+        zIndex: def.zIndex,
+        tint: def.tint,
+      }));
+
+      const jsonString = JSON.stringify(shapesToSave, null, 4);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'shapes.json';
+      a.click();
+      URL.revokeObjectURL(url);
     };
 
     canvasEl.addEventListener('pointermove', onPointerMove);
@@ -717,7 +821,14 @@ function App() {
         if (stateRef.current.hoverAnimationStart !== null && stateRef.current.hoverShapeId) {
           const now = performance.now();
           const elapsed = now - stateRef.current.hoverAnimationStart;
-          const progress = Math.min(elapsed / stateRef.current.hoverAnimationDuration, 1.0);
+          const duration = stateRef.current.hoverAnimationDuration;
+          let progress = 0;
+
+          if (stateRef.current.hoverAnimationDirection === 'in') {
+            progress = Math.min(elapsed / duration, 1.0);
+          } else {
+            progress = 1.0 - Math.min(elapsed / duration, 1.0);
+          }
           
           // Update hover shape with current animation progress
           const originalShape = stateRef.current.hoveredShapeId 
@@ -730,9 +841,34 @@ function App() {
             stateRef.current.shapeManager.updateShape(stateRef.current.hoverShapeId, hoverShapeData);
           }
           
-          // Stop animation when complete
-          if (progress >= 1.0) {
+          if (stateRef.current.hoverAnimationDirection === 'in' && progress >= 1.0) {
             stateRef.current.hoverAnimationStart = null;
+          } else if (stateRef.current.hoverAnimationDirection === 'out' && progress <= 0.0) {
+            if (stateRef.current.hoverShapeId) {
+              stateRef.current.shapeManager.removeShape(stateRef.current.hoverShapeId);
+            }
+            stateRef.current.hoveredShapeId = null;
+            stateRef.current.hoverShapeId = null;
+            stateRef.current.hoverAnimationStart = null;
+          }
+        }
+
+        // Update new shape creation animation if active
+        if (stateRef.current.newShapeAnimationState) {
+          const anim = stateRef.current.newShapeAnimationState;
+          const now = performance.now();
+          const elapsed = now - anim.startTime;
+          const progress = Math.min(elapsed / anim.duration, 1.0);
+          
+          const easeProgress = 1 - Math.pow(1 - progress, 3);
+          
+          const currentWidth = anim.startSize.width + (anim.endSize.width - anim.startSize.width) * easeProgress;
+          const currentHeight = anim.startSize.height + (anim.endSize.height - anim.startSize.height) * easeProgress;
+          
+          stateRef.current.shapeManager.updateShape(anim.shapeId, { size: { width: currentWidth, height: currentHeight } });
+          
+          if (progress >= 1.0) {
+            stateRef.current.newShapeAnimationState = null;
           }
         }
 

@@ -262,7 +262,7 @@ export class ShapeManager {
     count: number;
   } {
     const shapes = this.getAllShapes().filter(s => s.visible); // Use unsorted but visible shapes
-    const maxShapes = 20; // Maximum shapes supported by shader
+    const maxShapes = 50; // Maximum shapes supported by shader
     
     const positions: number[] = [];
     const sizes: number[] = [];
