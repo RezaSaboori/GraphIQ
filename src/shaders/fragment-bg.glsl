@@ -101,6 +101,12 @@ float smin(float a, float b, float k) {
   return min(a, b) - h * h * k * (1.0 / 4.0);
 }
 
+// Smooth maximum function for shadow blending
+float smax(float a, float b, float k) {
+  float h = max(k - abs(a - b), 0.0) / k;
+  return max(a, b) + h * h * k * (1.0 / 4.0);
+}
+
 float mainSDF(vec2 p) {
   float minDist = 1e20;
   int shapeCount = int(u_shapeCount);
@@ -227,8 +233,12 @@ void main() {
       );
     }
     
-    float shapeShadow = exp(-1.0 / u_shadowExpand * abs(dist) * u_resolution1x.y) * 0.6 * u_shadowFactor;
-    shadow = max(shadow, shapeShadow);
+    // Softer, more natural shadow falloff using smoothstep for a penumbra effect
+    float penumbra = u_shadowExpand / u_resolution.y; // Define penumbra size
+    float shadowIntensity = 1.0 - smoothstep(0.0, penumbra, dist);
+    float shapeShadow = shadowIntensity * 0.6 * u_shadowFactor;
+    
+    shadow = smax(shadow, shapeShadow, 0.2); // Use smooth max for better blending
   }
 
   fragColor = vec4(bgColor - vec3(shadow), 1.0);

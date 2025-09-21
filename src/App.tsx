@@ -262,7 +262,7 @@ function App() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch('datasets/shapes.json');
+        const res = await fetch('/api/shapes');
         if (!res.ok) return;
         const data: Array<{
           id: string;
@@ -665,7 +665,7 @@ function App() {
           if (shapeDef) {
             shapeDef.position = newShape.position;
           }
-          saveShapesToFile();
+          saveShapesToServer();
         }
         stateRef.current.newlyCreatedShapeId = null;
       }
@@ -689,8 +689,8 @@ function App() {
       }
     };
 
-    const saveShapesToFile = () => {
-      const shapesToSave = stateRef.current.shapeDefinitions.map(def => ({
+    const saveShapesToServer = async () => {
+      const shapesToSave = stateRef.current.shapeDefinitions.map((def) => ({
         id: def.id,
         position: def.position,
         size: {
@@ -700,14 +700,17 @@ function App() {
         tint: def.tint,
       }));
 
-      const jsonString = JSON.stringify(shapesToSave, null, 4);
-      const blob = new Blob([jsonString], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'shapes.json';
-      a.click();
-      URL.revokeObjectURL(url);
+      try {
+        await fetch('/api/shapes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(shapesToSave, null, 4),
+        });
+      } catch (error) {
+        console.error('Failed to save shapes:', error);
+      }
     };
 
     canvasEl.addEventListener('pointermove', onPointerMove);
