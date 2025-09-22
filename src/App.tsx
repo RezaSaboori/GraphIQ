@@ -21,10 +21,12 @@ import PassthroughFragmentShader from './shaders/fragment-passthrough.glsl?raw';
 
 import VertexShader from './shaders/vertex.glsl?raw';
 import FragmentBgShader from './shaders/fragment-bg.glsl?raw';
+import FragmentConnectorsShader from './shaders/fragment-connectors.glsl?raw';
  
 import FragmentMainShader from './shaders/fragment-main.glsl?raw';
 import { useLevaControls } from './Controls';
 import { ShapeManager, type Shape } from './utils/ShapeManager';
+import { ConnectorManager, type Connector } from './utils/ConnectorManager';
 import { LiquidShape } from './elements/LiquidShape';
 import PerformanceCard from './components/PerformanceCard';
 import { Camera } from './utils/Camera';
@@ -133,6 +135,7 @@ function App() {
       tint: ColorValue;
     }>;
     shapeManager: ShapeManager;
+    connectorManager: ConnectorManager;
     draggingShapeId: string | null;
     dragStartPos: { x: number; y: number };
     dragStartShapePos: { x: number; y: number };
@@ -190,6 +193,7 @@ function App() {
       ];
     })(),
     shapeManager: new ShapeManager([]), // Will be initialized with shapeDefinitions
+    connectorManager: new ConnectorManager([]),
     draggingShapeId: null,
     dragStartPos: { x: 0, y: 0 },
     dragStartShapePos: { x: 0, y: 0 },
@@ -289,6 +293,14 @@ function App() {
         }));
         stateRef.current.shapeManager = new ShapeManager(shapes);
         stateRef.current.shapeManager.setShapeDefinitions(defs);
+
+        // Load connectors
+        const connectorsRes = await fetch('/api/connectors');
+        if (connectorsRes.ok) {
+          const connectorsData: Connector[] = await connectorsRes.json();
+          stateRef.current.connectorManager = new ConnectorManager(connectorsData);
+        }
+
         // Force renderer to rebuild on next frame
         stateRef.current.lastBatchCount = -1; // Force rebuild
       } catch (err) {
@@ -725,10 +737,15 @@ function App() {
       const controls = stateRef.current.controls; // Moved this line up
       const batchedData = stateRef.current.shapeManager.getBatchedShapeData(controls.maxShapesPerPass);
       const initialPasses: any[] = [
-        { name: 'bgPass', shader: { vertex: VertexShader, fragment: FragmentBgShader } }
+        { name: 'bgPass', shader: { vertex: VertexShader, fragment: FragmentBgShader } },
+        {
+          name: 'connectorsPass',
+          shader: { vertex: VertexShader, fragment: FragmentConnectorsShader },
+          inputs: { u_previousLayer: 'bgPass' },
+        },
       ];
 
-      let previousLayerName = 'bgPass';
+      let previousLayerName = 'connectorsPass';
       batchedData.batches.forEach((batch, index) => {
         const passName = `alphaBatch_${index}`;
         const isLastBatch = index === batchedData.batches.length - 1;
@@ -880,10 +897,15 @@ function App() {
         // Only rebuild render passes if the number of batches has changed
         if (batchedData.batches.length !== stateRef.current.lastBatchCount) {
             const newPasses: any[] = [
-                { name: 'bgPass', shader: { vertex: VertexShader, fragment: FragmentBgShader } }
+                { name: 'bgPass', shader: { vertex: VertexShader, fragment: FragmentBgShader } },
+                {
+                  name: 'connectorsPass',
+                  shader: { vertex: VertexShader, fragment: FragmentConnectorsShader },
+                  inputs: { u_previousLayer: 'bgPass' },
+                }
             ];
 
-            let previousLayerName = 'bgPass';
+            let previousLayerName = 'connectorsPass';
             batchedData.batches.forEach((_, index) => {
                 const passName = `alphaBatch_${index}`;
                 const isLastBatch = index === batchedData.batches.length - 1;
@@ -1031,6 +1053,19 @@ function App() {
             u_isHoverShape: stateRef.current.shapeManager.getShapeDataForShader(stateRef.current.camera, canvasInfo).isHoverShape,
             u_mergeRatio: controls.mergeRatio * cameraZoom,
           },
+        };
+
+        const connectorData = stateRef.current.connectorManager.getConnectorDataForShader(
+          stateRef.current.shapeManager,
+          stateRef.current.camera,
+          canvasInfo
+        );
+        passUniforms.connectorsPass = {
+          u_connectorCount: connectorData.count,
+          u_connectorPositions: new Float32Array(connectorData.positions),
+          u_connectorWeights: new Float32Array(connectorData.weights),
+          u_connectorTints: new Float32Array(connectorData.tints),
+          u_resolution: [canvasInfo.width * canvasInfo.dpr, canvasInfo.height * canvasInfo.dpr],
         };
 
         batchedData.batches.forEach((batch, index) => {

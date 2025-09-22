@@ -13,6 +13,7 @@ const port = 3000;
 app.use(bodyParser.json());
 
 const shapesFilePath = path.join(__dirname, '../public/datasets/shapes.json');
+const connectorsFilePath = path.join(__dirname, '../public/datasets/connectors.json');
 
 // API to get shapes
 app.get('/api/shapes', (req, res) => {
@@ -20,6 +21,19 @@ app.get('/api/shapes', (req, res) => {
         if (err) {
             console.error(err);
             res.status(500).send('Error reading shapes file');
+            return;
+        }
+        res.setHeader('Content-Type', 'application/json');
+        res.send(data);
+    });
+});
+
+// API to get connectors
+app.get('/api/connectors', (req, res) => {
+    fs.readFile(connectorsFilePath, 'utf8', (err, data) => {
+        if (err) {
+            console.error(err);
+            res.status(500).send('Error reading connectors file');
             return;
         }
         res.setHeader('Content-Type', 'application/json');

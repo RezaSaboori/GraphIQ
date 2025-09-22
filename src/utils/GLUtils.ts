@@ -125,25 +125,17 @@ export class ShaderProgram {
 
       const originalName = info.name;
       const arrayRegex = /\[\d+\]$/;
+      const isArray = arrayRegex.test(originalName) || info.size > 1;
+      const name = originalName.replace(arrayRegex, '');
 
-      if (arrayRegex.test(originalName)) {
-        const baseName = originalName.replace(arrayRegex, '');
-        this.uniforms.set(baseName, {
-          location,
-          type: info.type,
-          value: null,
-          isArray: {
-            size: info.size
-          }
-        })
-      } else {
-        this.uniforms.set(info.name, {
-          location,
-          type: info.type,
-          value: null,
-          isArray: false
-        });
-      }
+      if (this.uniforms.has(name)) continue;
+
+      this.uniforms.set(name, {
+        location,
+        type: info.type,
+        value: null,
+        isArray: isArray ? { size: info.size } : false,
+      });
     }
   }
 
@@ -158,21 +150,21 @@ export class ShaderProgram {
 
     const location = uniformInfo.location;
 
-    if (uniformInfo.isArray && Array.isArray(value)) {
+    if (uniformInfo.isArray) {
+      if (!(Array.isArray(value) || value instanceof Float32Array)) return;
       switch (uniformInfo.type) {
         case gl.FLOAT:
-          gl.uniform1fv(uniformInfo.location, value);
+          gl.uniform1fv(location, value);
           break;
         case gl.FLOAT_VEC2:
-          gl.uniform2fv(uniformInfo.location, value);
+          gl.uniform2fv(location, value);
           break;
         case gl.FLOAT_VEC3:
-          gl.uniform3fv(uniformInfo.location, value);
+          gl.uniform3fv(location, value);
           break;
         case gl.FLOAT_VEC4:
-          gl.uniform4fv(uniformInfo.location, value);
+          gl.uniform4fv(location, value);
           break;
-        // Add handling for other types as needed...
       }
     } else {
       switch (uniformInfo.type) {
@@ -200,7 +192,6 @@ export class ShaderProgram {
         case gl.FLOAT_MAT4:
           gl.uniformMatrix4fv(location, false, value);
           break;
-        // case gl.ARRAY
       }
     }
   }
