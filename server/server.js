@@ -54,6 +54,18 @@ app.post('/api/shapes', (req, res) => {
     });
 });
 
+app.post('/api/connectors', (req, res) => {
+    const newConnectorsData = req.body;
+    fs.writeFile(connectorsFilePath, JSON.stringify(newConnectorsData, null, 2), 'utf8', (err) => {
+        if (err) {
+            console.error(err);
+            res.status(500).send('Error writing connectors file');
+            return;
+        }
+        res.status(200).send({ message: 'Connectors saved successfully' });
+    });
+});
+
 app.listen(port, () => {
     console.log(`[server] listening at http://localhost:${port}`);
 });

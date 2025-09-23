@@ -152,6 +152,7 @@ export class ShaderProgram {
 
     if (uniformInfo.isArray) {
       if (!(Array.isArray(value) || value instanceof Float32Array)) return;
+      if (value.length === 0) return;
       switch (uniformInfo.type) {
         case gl.FLOAT:
           gl.uniform1fv(location, value);

@@ -618,6 +618,30 @@ function App() {
           size: { width: controls.shapeWidth, height: 200 },
         });
 
+        const parentShapeId = stateRef.current.hoveredShapeId;
+
+        // --- New ID generation logic ---
+        const allConnectors = stateRef.current.connectorManager.getAllConnectors();
+        let maxId = 0;
+        allConnectors.forEach(c => {
+            if (c.id.startsWith('arrow')) {
+                const num = parseInt(c.id.replace('arrow', ''), 10);
+                if (!isNaN(num) && num > maxId) {
+                    maxId = num;
+                }
+            }
+        });
+        const newConnectorId = `arrow${maxId + 1}`;
+        
+        const newConnector: Connector = {
+            id: newConnectorId,
+            fromID: parentShapeId,
+            toID: newId,
+            tint: [255, 255, 255],
+            weight: 1,
+        };
+        stateRef.current.connectorManager.addConnector(newConnector);
+
         stateRef.current.draggingShapeId = newId;
         stateRef.current.dragStartPos = { x: e.clientX, y: e.clientY };
         stateRef.current.draggingGroupShapes.clear();
@@ -678,6 +702,7 @@ function App() {
             shapeDef.position = newShape.position;
           }
           saveShapesToServer();
+          saveConnectorsToServer();
         }
         stateRef.current.newlyCreatedShapeId = null;
       }
@@ -722,6 +747,21 @@ function App() {
         });
       } catch (error) {
         console.error('Failed to save shapes:', error);
+      }
+    };
+
+    const saveConnectorsToServer = async () => {
+      const connectorsToSave = stateRef.current.connectorManager.getAllConnectors();
+      try {
+        await fetch('/api/connectors', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(connectorsToSave, null, 2),
+        });
+      } catch (error) {
+        console.error('Failed to save connectors:', error);
       }
     };
 

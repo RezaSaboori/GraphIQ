@@ -1,82 +1,114 @@
 [
-    {
-        "id": "shape1",
-        "position": {
-            "x": 100,
-            "y": 0
-        },
-        "size": {
-            "height": 200
-        },
-        "zIndex": 0,
-        "tint": [
-            255,
-            255,
-            255
-        ]
+  {
+    "id": "shape1",
+    "position": {
+      "x": 100,
+      "y": 0
     },
-    {
-        "id": "shape2",
-        "position": {
-            "x": -200,
-            "y": -200
-        },
-        "size": {
-            "height": 200
-        },
-        "zIndex": 1,
-        "tint": [
-            0,
-            255,
-            0
-        ]
+    "size": {
+      "height": 200
     },
-    {
-        "id": "shape3",
-        "position": {
-            "x": -50,
-            "y": 250
-        },
-        "size": {
-            "height": 200
-        },
-        "zIndex": 2,
-        "tint": [
-            255,
-            255,
-            255
-        ]
+    "zIndex": 0,
+    "tint": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "shape2",
+    "position": {
+      "x": -200,
+      "y": -200
     },
-    {
-        "id": "shape4",
-        "position": {
-            "x": 300,
-            "y": 100
-        },
-        "size": {
-            "height": 100
-        },
-        "zIndex": 3,
-        "tint": [
-            255,
-            255,
-            0
-        ]
+    "size": {
+      "height": 200
     },
-    {
-        "id": "shape5",
-        "position": {
-            "x": -350,
-            "y": 150
-        },
-        "size": {
-            "height": 180
-        },
-        "zIndex": 4,
-        "tint": [
-            255,
-            255,
-            255
-        ]
-    }
+    "zIndex": 1,
+    "tint": [
+      0,
+      255,
+      0
+    ]
+  },
+  {
+    "id": "shape3",
+    "position": {
+      "x": -50,
+      "y": 250
+    },
+    "size": {
+      "height": 200
+    },
+    "zIndex": 2,
+    "tint": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "shape4",
+    "position": {
+      "x": 300,
+      "y": 100
+    },
+    "size": {
+      "height": 100
+    },
+    "zIndex": 3,
+    "tint": [
+      255,
+      255,
+      0
+    ]
+  },
+  {
+    "id": "shape5",
+    "position": {
+      "x": -350,
+      "y": 150
+    },
+    "size": {
+      "height": 180
+    },
+    "zIndex": 4,
+    "tint": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "shape6",
+    "position": {
+      "x": -157,
+      "y": -232.5
+    },
+    "size": {
+      "height": 200
+    },
+    "zIndex": 5,
+    "tint": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "shape7",
+    "position": {
+      "x": -685,
+      "y": 100.5
+    },
+    "size": {
+      "height": 200
+    },
+    "zIndex": 6,
+    "tint": [
+      255,
+      255,
+      255
+    ]
+  }
 ]

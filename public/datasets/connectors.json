@@ -1,57 +1,79 @@
 [
-    {
-        "id": "arrow1",
-        "fromID": "shape1",
-        "toID": "shape2",
-        "tint": [
-            255,
-            255,
-            255
-        ],
-        "weight": 2
-    },
-    {
-        "id": "arrow2",
-        "fromID": "shape1",
-        "toID": "shape3",
-        "tint": [
-            255,
-            255,
-            255
-        ],
-        "weight": 1
-    },
-    {
-        "id": "arrow3",
-        "fromID": "shape2",
-        "toID": "shape3",
-        "tint": [
-            255,
-            255,
-            255
-        ],
-        "weight": 5
-    },
-    {
-        "id": "arrow4",
-        "fromID": "shape3",
-        "toID": "shape5",
-        "tint": [
-            255,
-            255,
-            255
-        ],
-        "weight": 1
-    },
-    {
-        "id": "arrow5",
-        "fromID": "shape4",
-        "toID": "shape5",
-        "tint": [
-            255,
-            255,
-            255
-        ],
-        "weight": 1
-    }
+  {
+    "id": "arrow1",
+    "fromID": "shape1",
+    "toID": "shape2",
+    "tint": [
+      255,
+      255,
+      255
+    ],
+    "weight": 2
+  },
+  {
+    "id": "arrow2",
+    "fromID": "shape1",
+    "toID": "shape3",
+    "tint": [
+      255,
+      255,
+      255
+    ],
+    "weight": 1
+  },
+  {
+    "id": "arrow3",
+    "fromID": "shape2",
+    "toID": "shape3",
+    "tint": [
+      255,
+      255,
+      255
+    ],
+    "weight": 5
+  },
+  {
+    "id": "arrow4",
+    "fromID": "shape3",
+    "toID": "shape5",
+    "tint": [
+      255,
+      255,
+      255
+    ],
+    "weight": 1
+  },
+  {
+    "id": "arrow5",
+    "fromID": "shape4",
+    "toID": "shape5",
+    "tint": [
+      255,
+      255,
+      255
+    ],
+    "weight": 1
+  },
+  {
+    "id": "conn_shape2_shape6",
+    "fromID": "shape2",
+    "toID": "shape6",
+    "tint": [
+      255,
+      255,
+      255
+    ],
+    "weight": 1
+  },
+  {
+    "id": "arrow6",
+    "fromID": "shape2",
+    "toID": "shape7",
+    "tint": [
+      255,
+      255,
+      255
+    ],
+    "weight": 1
+  }
 ]
